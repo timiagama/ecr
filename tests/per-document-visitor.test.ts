@@ -882,3 +882,59 @@ describe('Feature: All diagnostics from all rules are aggregated', () => {
     expect(ecr104Diagnostics.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ===========================================================================
+// Feature: References hidden inside inline formatting are reported
+// ===========================================================================
+
+describe('Feature: A reference whose identifier is wrapped in formatting is reported, not followed', () => {
+  /**
+   * Lints one paragraph inside an otherwise valid document that declares 8.1.
+   *
+   * @param paragraph - The paragraph under test
+   * @returns The lint result
+   */
+  function lintParagraph(paragraph: string): LintResult {
+    return lintMarkdown([
+      '# 5.1 - Doc',
+      '',
+      '## 5.1#1 - Section',
+      '',
+      paragraph,
+      '',
+      '## References',
+      '',
+      '- 8.1 - Orchestration Contract (constraint - retry semantics)',
+    ].join('\n'));
+  }
+
+  it.each([
+    { form: 'a link', paragraph: 'Retries follow, see [8.1#3](./8.1.md).', wrapper: 'link', kind: 'see' },
+    { form: 'bold text', paragraph: 'Retries apply per **8.1#3**.', wrapper: 'strong', kind: 'per' },
+    { form: 'italic text', paragraph: 'See *8.1* for details.', wrapper: 'emphasis', kind: 'see' },
+  ])('warns when the identifier is inside $form, and extracts no edge', ({ paragraph, wrapper, kind }) => {
+    const result: LintResult = lintParagraph(paragraph);
+    const warnings: readonly Diagnostic[] = result.diagnostics.filter(
+      (diagnostic: Diagnostic) => diagnostic.ruleId === 'ECR104',
+    );
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.severity).toBe('warning');
+    expect(warnings[0]!.data).toMatchObject({ reason: 'wrapped-reference', wrapper, kind });
+    expect(warnings[0]!.range?.start.line).toBe(4);
+    expect(result.ok).toBe(true);
+    expect(result.extracted!.inlineReferences).toEqual([]);
+  });
+
+  it.each([
+    { form: 'the whole reference inside a link', paragraph: 'Retries: [see 8.1#3](./8.1.md).', edges: ['8.1#3'] },
+    { form: 'a plain reference followed by a link', paragraph: 'Retries: see 8.1#3 ([doc](./8.1.md)).', edges: ['8.1#3'] },
+    { form: 'a link whose text is not an identifier', paragraph: 'For more, see [the docs](./x.md).', edges: [] },
+    { form: 'an identifier in inline code', paragraph: 'Written as see `8.1#3` in code.', edges: [] },
+  ])('stays silent for $form', ({ paragraph, edges }) => {
+    const result: LintResult = lintParagraph(paragraph);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.extracted!.inlineReferences.map((edge: InlineReferenceEdge) => edge.toId)).toEqual(edges);
+  });
+});

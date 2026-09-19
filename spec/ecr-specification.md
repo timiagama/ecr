@@ -578,6 +578,8 @@ Rules:
         
     - Across a corpus, an undeclared target whose DocID is a document in the corpus is an ERROR: it is a real reference with a missing declaration. An undeclared target that names no document remains a WARNING.
         
+4. The keyword and the `TargetID` MUST be adjacent plain text. Where inline formatting separates them — the `TargetID` begins a link, bold, italic or strikethrough span that directly follows the keyword, as in `see [8.1#3](…)` — the reference is invisible to a text search, so no edge is extracted and a WARNING is emitted.
+    
 
 ---
 

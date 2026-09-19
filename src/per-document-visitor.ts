@@ -682,6 +682,11 @@ export class PerDocumentVisitor {
     // Recurse into children with updated ancestor types
     if (node.children !== undefined) {
       const updatedAncestors: readonly string[] = [...ancestorTypes, node.type];
+
+      if (!this.tellNodeExcludedByAncestors(updatedAncestors)) {
+        this.feedSiblingPairsForWrappedReferences(node.children, inlineReferenceRule);
+      }
+
       for (const child of node.children) {
         this.walkNodesForInlineReferences(
           child,
@@ -690,6 +695,38 @@ export class PerDocumentVisitor {
           inlineReferenceRule,
         );
       }
+    }
+  }
+
+  /**
+   * Passes each text node, and the node that follows it, to ECR104's
+   * wrapped-reference check.
+   *
+   * When a reference is written `see [8.1#3](8.1.md)`, the keyword ends one
+   * text node and the identifier starts the next node, so neither is visible
+   * to the per-text-node scan. Only adjacent siblings can reveal it.
+   *
+   * @param children - The child nodes of one parent, in document order
+   * @param inlineReferenceRule - The ECR104 rule instance
+   */
+  private feedSiblingPairsForWrappedReferences(
+    children: readonly MdastNode[],
+    inlineReferenceRule: InlineReferenceRule,
+  ): void {
+    for (let index: number = 0; index < children.length - 1; index += 1) {
+      const current: MdastNode | undefined = children[index];
+      const next: MdastNode | undefined = children[index + 1];
+
+      if (current?.type !== 'text' || current.value === undefined || next === undefined) {
+        continue;
+      }
+
+      inlineReferenceRule.evaluateWrappedReference(
+        current.value,
+        next.type,
+        toString(next),
+        this.mapPosition(next.position),
+      );
     }
   }
 

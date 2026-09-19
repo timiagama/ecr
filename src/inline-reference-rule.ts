@@ -217,6 +217,42 @@ export interface DetectedInlineReference {
 const INLINE_REFERENCE_PATTERN: RegExp = /(?:^|[\s(])([Ss]ee|[Pp]er)\s+(\d+(?:\.\d+)*(?:#\d+(?:\.\d+)*)?)/g;
 
 // ---------------------------------------------------------------------------
+// Wrapped reference detection (module-level)
+// ---------------------------------------------------------------------------
+
+/**
+ * Matches a `see`/`per` keyword at the very end of a text node, which is
+ * where it sits when the identifier after it is wrapped in formatting.
+ *
+ * Group 1: the keyword.
+ */
+const TRAILING_KEYWORD_PATTERN: RegExp = /(?:^|[\s(])([Ss]ee|[Pp]er)\s+$/;
+
+/**
+ * Matches an identifier at the very start of a node's text.
+ *
+ * Group 1: the DocID or SectionID.
+ */
+const LEADING_IDENTIFIER_PATTERN: RegExp = /^(\d+(?:\.\d+)*(?:#\d+(?:\.\d+)*)?)(?![\d#])/;
+
+/**
+ * Inline Markdown formatting that can separate a keyword from its identifier,
+ * with the words used to describe each in a diagnostic.
+ */
+const WRAPPER_DESCRIPTIONS: ReadonlyMap<string, string> = new Map([
+  ['link', 'a link'],
+  ['linkReference', 'a link'],
+  ['strong', 'bold text'],
+  ['emphasis', 'italic text'],
+  ['delete', 'strikethrough text'],
+]);
+
+/**
+ * The `data.reason` carried by a wrapped-reference diagnostic.
+ */
+export const WRAPPED_REFERENCE_REASON: string = 'wrapped-reference';
+
+// ---------------------------------------------------------------------------
 // Rule class
 // ---------------------------------------------------------------------------
 
@@ -385,6 +421,49 @@ export class InlineReferenceRule {
       };
       this.collectedInlineReferences.push(inlineReferenceEdge);
     }
+  }
+
+  /**
+   * Checks whether a keyword at the end of one text node is followed by an
+   * identifier wrapped in inline formatting, as in `see [8.1#3](8.1.md)` or
+   * `per **8.1#3**`.
+   *
+   * Such a reference is invisible to navigation: the characters between the
+   * keyword and the identifier stop a grep for `see 8.1#3` from matching it,
+   * and the linter follows grep deliberately, so no edge is extracted. A
+   * warning tells the author to write the identifier as plain text.
+   *
+   * @param precedingText - The value of the text node before the wrapper
+   * @param wrapperType - The MDAST type of the node that follows it
+   * @param wrappedText - The plain text content of that node
+   * @param range - Positional range of the wrapper node, when available
+   */
+  public evaluateWrappedReference(
+    precedingText: string,
+    wrapperType: string,
+    wrappedText: string,
+    range?: PositionRange,
+  ): void {
+    const wrapperDescription: string | undefined = WRAPPER_DESCRIPTIONS.get(wrapperType);
+    const keywordMatch: RegExpExecArray | null = TRAILING_KEYWORD_PATTERN.exec(precedingText);
+    const identifierMatch: RegExpExecArray | null = LEADING_IDENTIFIER_PATTERN.exec(wrappedText);
+
+    if (wrapperDescription === undefined || keywordMatch === null || identifierMatch === null) {
+      return;
+    }
+
+    const kind: InlineReferenceKind = (keywordMatch[1] ?? '').toLowerCase() as InlineReferenceKind;
+    const targetId: string = identifierMatch[1] ?? '';
+
+    this.collectedDiagnostics.push(
+      this.createDiagnostic(
+        `The identifier after "${kind}" is inside ${wrapperDescription}, so neither grep nor ` +
+        `the linter reads "${kind} ${targetId}" as a reference. ` +
+        `Write the identifier as plain text straight after the keyword.`,
+        range,
+        { reason: WRAPPED_REFERENCE_REASON, targetId, kind, wrapper: wrapperType },
+      ),
+    );
   }
 
   /**

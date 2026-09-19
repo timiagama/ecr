@@ -554,6 +554,28 @@ The heading with no list beneath it is valid: it declares that the document has 
 
 ---
 
+### 2#10.10 - ❌ Wrapping the Identifier in a Link or Formatting
+
+Incorrect:
+
+```markdown
+Retries are bounded, see [8.1#3.2](8.1-orchestration.md).
+Retries are bounded per **8.1#3.2**.
+```
+
+The brackets or asterisks between the keyword and the identifier mean a search for `see 8.1#3.2` no longer finds the reference, so neither an agent nor the linter can follow it. The linter warns when it sees this.
+
+Correct:
+
+```markdown
+Retries are bounded, see 8.1#3.2.
+Retries are bounded per 8.1#3.2 ([orchestration contract](8.1-orchestration.md)).
+```
+
+Keep the keyword and the identifier together as plain text. A link can still go elsewhere in the sentence, or around the whole reference: `[see 8.1#3.2](…)` is found by grep and followed by the linter.
+
+---
+
 ## 2#11 - Migrating Existing Documentation to ECR
 
 Most teams adopting ECR already have an existing Markdown corpus.
