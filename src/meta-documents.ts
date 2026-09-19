@@ -116,7 +116,9 @@ export class MetaDocumentFilter {
   /**
    * Compiles a minimal glob pattern into an anchored regular expression.
    *
-   * `**` matches across path separators; `*` matches within a single segment;
+   * A `**` followed by a slash matches zero or more whole directories, so a
+   * pattern of that form matches a file at the corpus root as well as one
+   * nested in `a/b/`. Any other `**` matches across path separators; `*` matches within a single segment;
    * `?` matches one character other than a separator. All other characters are
    * matched literally.
    *
@@ -130,7 +132,10 @@ export class MetaDocumentFilter {
       const character: string = pattern[index] ?? '';
 
       if (character === '*') {
-        if (pattern[index + 1] === '*') {
+        if (pattern[index + 1] === '*' && pattern[index + 2] === '/') {
+          expression += '(?:.*/)?';
+          index += 2;
+        } else if (pattern[index + 1] === '*') {
           expression += '.*';
           index += 1;
         } else {

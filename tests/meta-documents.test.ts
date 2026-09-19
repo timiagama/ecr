@@ -89,6 +89,15 @@ describe('Feature: Project-specific documents are excluded by ignore pattern', (
     expect(filter.shouldExclude('docs/4.2 - Contract.md')).toBe(false);
   });
 
+  it('lets a leading **/ match zero directories, so a file at the corpus root is excluded too', () => {
+    const filter: MetaDocumentFilter = new MetaDocumentFilter(['**/*-CHECKLIST.md', 'a/**/NOTES.md']);
+
+    expect(filter.shouldExclude('REVIEW-CHECKLIST.md')).toBe(true);
+    expect(filter.shouldExclude('a/NOTES.md')).toBe(true);
+    expect(filter.shouldExclude('a/b/c/NOTES.md')).toBe(true);
+    expect(filter.shouldExclude('ab/NOTES.md')).toBe(false);
+  });
+
   it('excludes a whole directory', () => {
     const filter: MetaDocumentFilter = new MetaDocumentFilter(['_drafts/**']);
 
