@@ -142,7 +142,7 @@ A dotted-only grammar cannot distinguish a document from a
 similarly-numbered sibling. This pattern:
 
 ```bash
-rg -n "\b(see|per) 8\.1(\.\d+)*\b" docs
+rg -n "\b([Ss]ee|[Pp]er) 8\.1(\.\d+)*\b" docs
 ```
 
 matches references to sections of document `8.1`, **and** references to document
@@ -150,13 +150,18 @@ matches references to sections of document `8.1`, **and** references to document
 
 | Question | Pattern |
 |---|---|
-| Who references document `8.1`? | `rg -n "\b(see\|per) 8\.1(\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
-| Who references any section of `8.1`? | `rg -n "\b(see\|per) 8\.1#" docs` |
-| Who references section `8.1#3` or below? | `rg -n "\b(see\|per) 8\.1#3\b" docs` |
-| Either the document or any section? | `rg -n "\b(see\|per) 8\.1(#[0-9.]*\|\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
-| Every section-precise reference in the corpus | `rg -n "\b(see\|per) [0-9.]+#" docs` |
+| Who references document `8.1`? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1(\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
+| Who references any section of `8.1`? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1#" docs` |
+| Who references section `8.1#3` or below? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1#3\b" docs` |
+| Either the document or any section? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1(#[0-9.]*\|\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
+| Every section-precise reference in the corpus | `rg -n "\b([Ss]ee\|[Pp]er) [0-9.]+#" docs` |
 
 The last row is not expressible without the separator.
+
+`see` and `per` are matched with an optional capital because a reference at the
+start of a sentence is still a reference. These rows are the same patterns the
+navigation protocol publishes, where they are tested against the example corpus;
+change them there first.
 
 ### 3#5.1 - Why the document-only patterns carry a trailing group
 
@@ -176,7 +181,7 @@ both sentence-final and mid-sentence positions.
 Where ripgrep is built with PCRE2, `-P` permits the clearer lookahead form:
 
 ```bash
-rg -P -n "\b(see|per) 8\.1(?!#)(?![0-9])(?!\.[0-9])" docs
+rg -P -n "\b([Ss]ee|[Pp]er) 8\.1(?!#)(?![0-9])(?!\.[0-9])" docs
 ```
 
 The default-engine patterns are given as the primary form because they need no
