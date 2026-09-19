@@ -1,4 +1,7 @@
-# Store every text file with LF line endings, whatever the platform.
-# Without this, core.autocrlf decides per machine, and a CRLF shebang
-# breaks the ecr binary on macOS and Linux.
-* text=auto eol=lf
+# Store every text file with LF line endings in the repository. Each
+# contributor's own core.autocrlf setting decides what their checkout uses.
+#
+# What gets published does not depend on that choice: tsconfig's
+# "newLine": "lf" makes the compiled output LF, including the ecr
+# binary's shebang, whose line ending macOS and Linux are sensitive to.
+* text=auto
