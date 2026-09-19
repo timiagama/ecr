@@ -77,6 +77,8 @@ describe('Feature: Argument parsing', () => {
     { argv: ['lint', '--ignore', '--format'], reason: 'ignore consuming the next option' },
     { argv: ['lint', '--wat'], reason: 'unknown option' },
     { argv: ['lint', 'a', 'b'], reason: 'two directories' },
+    { argv: ['lint', 'a', '--example'], reason: 'a directory and --example together' },
+    { argv: ['init', '--example'], reason: '--example with init' },
   ])('rejects $reason rather than guessing', ({ argv }) => {
     expect(() => parser.parse(argv)).toThrow();
   });
@@ -377,5 +379,35 @@ describe('Feature: Usage errors', () => {
 
     expect(outcome.exitCode).toBe(EXIT_VALIDATION_FAILED);
     expect(outcome.stream).toBe('stdout');
+  });
+});
+
+describe('Feature: --example runs against the bundled example corpus', () => {
+  const cli: EcrCommandLine = new EcrCommandLine();
+
+  it('is parsed as a flag, leaving the default directory untouched', () => {
+    const parsed: ParsedArguments = new ArgumentParser().parse(['stats', '--example']);
+
+    expect(parsed.useExample).toBe(true);
+    expect(parsed.corpusRoot).toBe('docs');
+  });
+
+  it('measures the example corpus without being given its path', () => {
+    const outcome: CommandOutcome = cli.run(['stats', '--example', '--format', 'json']);
+    const report: { documents: number; totalEdges: number } = JSON.parse(outcome.output) as {
+      documents: number;
+      totalEdges: number;
+    };
+
+    expect(outcome.exitCode).toBe(EXIT_SUCCESS);
+    expect(report.documents).toBe(9);
+    expect(report.totalEdges).toBe(38);
+  });
+
+  it('lints the example corpus clean', () => {
+    const outcome: CommandOutcome = cli.run(['lint', '--example']);
+
+    expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
+    expect(outcome.output).toContain('9 document(s) validated, no errors.');
   });
 });

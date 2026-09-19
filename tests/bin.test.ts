@@ -68,6 +68,7 @@ beforeAll(() => {
 
   cpSync(join(REPOSITORY_ROOT, 'package.json'), join(packageDirectory, 'package.json'));
   cpSync(join(REPOSITORY_ROOT, 'protocol'), join(packageDirectory, 'protocol'), { recursive: true });
+  cpSync(join(REPOSITORY_ROOT, 'examples'), join(packageDirectory, 'examples'), { recursive: true });
 
   // Links are junctions on Windows (no privileges needed) and directory
   // symlinks elsewhere. The first gives the compiled code its dependencies.
@@ -105,6 +106,16 @@ describe('Feature: The installed binary runs when reached through a symlink', ()
 
     expect(run.status, run.stdout).toBe(1);
     expect(run.stdout).toContain('ECR103');
+  });
+
+  it('finds the bundled example corpus from the installed package, whatever the working directory', () => {
+    const run: SpawnSyncReturns<string> = spawnSync(process.execPath, [linkedBinPath, 'stats', '--example'], {
+      encoding: 'utf8',
+      cwd: workspace,
+    });
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toMatch(/total edges\s+38/);
   });
 
   it('writes a usage error to stderr, leaving stdout empty for anything piping it', () => {

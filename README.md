@@ -251,8 +251,11 @@ npx @timiagama/ecr stats ./docs   # measure the structure you already have
 
 ### Try it on the example corpus
 
+A small example corpus ships with the package, so you can try the tool before
+pointing it at your own documents:
+
 ```bash
-npx @timiagama/ecr stats examples/docs
+npx @timiagama/ecr stats --example
 ```
 
 ```

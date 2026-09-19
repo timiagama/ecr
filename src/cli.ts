@@ -62,6 +62,8 @@ export interface ParsedArguments {
   readonly command: CommandName;
   /** Directory the command operates on. */
   readonly corpusRoot: string;
+  /** Whether to run against the example corpus bundled with the package. */
+  readonly useExample: boolean;
   /** Output format for `lint` and `stats`. */
   readonly format: ReportFormat;
   /** Glob patterns excluding project-specific meta-documents. */
@@ -100,6 +102,8 @@ const USAGE_TEXT: string = `
   Options
     --format <pretty|json>   output format (default: pretty)
     --ignore <glob>          exclude paths; repeatable
+    --example                lint or measure the example corpus bundled
+                             with this package, instead of a directory
     --version                show the linter and spec versions
     --help                   show this message
 
@@ -137,11 +141,17 @@ export class ArgumentParser {
     }
 
     let corpusRoot: string | undefined = undefined;
+    let useExample: boolean = false;
     let format: ReportFormat = 'pretty';
     const ignorePatterns: string[] = [];
 
     for (let index: number = 0; index < rest.length; index += 1) {
       const argument: string = rest[index] ?? '';
+
+      if (argument === '--example') {
+        useExample = true;
+        continue;
+      }
 
       if (argument === '--format') {
         const value: string | undefined = rest[index + 1];
@@ -178,9 +188,18 @@ export class ArgumentParser {
       corpusRoot = argument;
     }
 
+    if (useExample && commandCandidate === 'init') {
+      throw new Error('--example works with lint and stats; init writes into your own corpus.');
+    }
+
+    if (useExample && corpusRoot !== undefined) {
+      throw new Error('Give a directory or --example, not both.');
+    }
+
     return {
       command: commandCandidate,
       corpusRoot: corpusRoot ?? 'docs',
+      useExample,
       format,
       ignorePatterns,
     };
@@ -250,11 +269,15 @@ export class EcrCommandLine {
       return this.runInit(corpusRoot, parsed.corpusRoot);
     }
 
-    if (!existsSync(corpusRoot) || !statSync(corpusRoot).isDirectory()) {
-      return this.fail(`  Directory not found: ${parsed.corpusRoot}\n`);
+    if (parsed.useExample) {
+      return this.runValidation(
+        parsed,
+        join(this.showPackageRoot(), 'examples', 'docs'),
+        'the bundled example corpus',
+      );
     }
 
-    return this.runValidation(parsed, corpusRoot);
+    return this.runValidation(parsed, corpusRoot, parsed.corpusRoot);
   }
 
   /**
@@ -262,14 +285,23 @@ export class EcrCommandLine {
    *
    * @param parsed - The parsed command line
    * @param corpusRoot - Resolved corpus directory
+   * @param displayedRoot - How to name the corpus in messages
    * @returns The text to print and the process exit code
    */
-  private runValidation(parsed: ParsedArguments, corpusRoot: string): CommandOutcome {
+  private runValidation(
+    parsed: ParsedArguments,
+    corpusRoot: string,
+    displayedRoot: string,
+  ): CommandOutcome {
+    if (!existsSync(corpusRoot) || !statSync(corpusRoot).isDirectory()) {
+      return this.fail(`  Directory not found: ${displayedRoot}\n`);
+    }
+
     const loader: CorpusLoader = new CorpusLoader(corpusRoot, parsed.ignorePatterns);
     const loaded: LoadedCorpus = loader.load();
 
     if (loaded.documents.length === 0) {
-      return this.fail(`  No Markdown documents found in ${parsed.corpusRoot}\n`);
+      return this.fail(`  No Markdown documents found in ${displayedRoot}\n`);
     }
 
     const corpusResult: CorpusResult = new Ecr().validateCorpus(loaded.documents);
