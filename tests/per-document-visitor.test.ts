@@ -1,7 +1,6 @@
 /**
- * Tests for PerDocumentVisitor (WI-7)
+ * Tests for PerDocumentVisitor
  *
- * Derived from the behavioural contract for the Per-Document Visitor.
  * Covers all 23 scenarios across 16 features:
  *   - Valid complete document (SCN-001)
  *   - Input echoing: uri and version (SCN-002, SCN-003)
@@ -22,8 +21,6 @@
  *   - List item dispatch to ECR103 (SCN-021)
  *   - Self-referencing inline references (SCN-022)
  *   - Diagnostic aggregation (SCN-023)
- *
- * Session: 20260221T195536Z_de9515
  */
 
 import { describe, it, expect } from 'vitest';
@@ -100,7 +97,7 @@ describe('Feature: Valid complete document producing a successful LintResult', (
     expect(extracted.docId).toBe('3.1');
     expect(extracted.title).toBe('Scenario Authoring');
 
-    // Sections: root (3.1) and one sub-section (3.1.1)
+    // Sections: root (3.1) and one sub-section (3.1#1)
     expect(extracted.sections.length).toBeGreaterThanOrEqual(2);
 
     const rootSection: SectionNode | undefined = extracted.sections.find(

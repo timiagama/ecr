@@ -1,7 +1,6 @@
 /**
  * Tests for ReferencesSectionRule (ECR103)
  *
- * Derived from the behavioural contract for ecr-wi5-references-section-rule.
  * Covers all 25 scenarios across 11 features:
  *   - References Section Presence (4 scenarios)
  *   - List Node Must Immediately Follow (3 scenarios)
@@ -14,8 +13,6 @@
  *   - No Duplicate TargetDocID Entries (2 scenarios)
  *   - ReferenceEdge Extraction (3 scenarios)
  *   - Empty References Section (1 scenario)
- *
- * Session: 20260221T153150Z_mg571r
  */
 
 import { describe, it, expect } from 'vitest';

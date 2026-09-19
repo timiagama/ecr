@@ -20,9 +20,6 @@
  *
  * Extracted artefacts:
  *   - {@link SectionNode} for each valid heading, with parentId derived from the heading stack
- *
- * Work item: ecr-wi4-section-hierarchy-rule
- * Session:   20260221T143206Z_3iobq0
  */
 
 import type { DocID, SectionID, Diagnostic, DiagnosticSeverity, PositionRange, SectionNode } from './types.js';
@@ -178,9 +175,9 @@ const SECTION_SEPARATOR_PATTERN: RegExp = /\s*[-–—]\s*/;
  * });
  *
  * rule.registerRootHeading({ depth: 1, text: '3.1 - My Document' });
- * rule.evaluateHeading({ depth: 2, text: '3.1.1 - Section One' });
- * rule.evaluateHeading({ depth: 3, text: '3.1.1.1 - Sub-Section' });
- * rule.evaluateHeading({ depth: 2, text: '3.1.2 - Section Two' });
+ * rule.evaluateHeading({ depth: 2, text: '3.1#1 - Section One' });
+ * rule.evaluateHeading({ depth: 3, text: '3.1#1.1 - Sub-Section' });
+ * rule.evaluateHeading({ depth: 2, text: '3.1#2 - Section Two' });
  *
  * const result: SectionHierarchyRuleResult = rule.finalise();
  * ```

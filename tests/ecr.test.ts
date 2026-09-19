@@ -1,8 +1,7 @@
 /**
  * Black-box test suite for the Ecr facade class.
  *
- * Derived exclusively from the Behavioural Contract for WI-9
- * (scenarios SCN-001 through SCN-023).
+ * Scenarios SCN-001 through SCN-023.
  *
  * All tests interact only through the approved public interface:
  * - {@link Ecr.lintDocument}

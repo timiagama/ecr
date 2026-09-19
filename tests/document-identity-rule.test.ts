@@ -1,11 +1,7 @@
 /**
  * Black-box test suite for DocumentIdentityRule
  *
- * Derived exclusively from the Behavioural Contract (SCN-001 through SCN-018)
- * exercised through the Interface Proposal's DocumentIdentityRule class.
- *
- * Work Item: ecr-wi3-document-identity-rule
- * Session:   20260220T220013Z_47df9d
+ * Scenarios SCN-001 through SCN-018, exercised through the public DocumentIdentityRule class.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -118,8 +114,8 @@ describe('Feature: Document Identity Rule [ECR101]', () => {
       it('extracts DocID when non-H1 headings are also present', () => {
         const result: DocumentIdentityRuleResult = evaluateHeadings([
           { depth: 1, text: '3.1 - Title' },
-          { depth: 2, text: '3.1.1 - Section One' },
-          { depth: 3, text: '3.1.1.1 - Sub Section' },
+          { depth: 2, text: '3.1#1 - Section One' },
+          { depth: 3, text: '3.1#1.1 - Sub Section' },
         ]);
 
         expect(
@@ -174,8 +170,8 @@ describe('Feature: Document Identity Rule [ECR101]', () => {
     describe('@SCN-004 — Headings exist but none at depth 1', () => {
       it('emits an error diagnostic and extracts no DocID when only non-H1 headings exist', () => {
         const result: DocumentIdentityRuleResult = evaluateHeadings([
-          { depth: 2, text: '3.1.1 - Sub Heading' },
-          { depth: 3, text: '3.1.1.1 - Deep Heading' },
+          { depth: 2, text: '3.1#1 - Sub Heading' },
+          { depth: 3, text: '3.1#1.1 - Deep Heading' },
         ]);
 
         expect(
@@ -553,7 +549,7 @@ describe('Feature: Document Identity Rule [ECR101]', () => {
         },
         {
           description: 'no depth-1 heading',
-          headings: [{ depth: 2, text: '3.1.1 - Sub Heading' }] as readonly HeadingNodeData[],
+          headings: [{ depth: 2, text: '3.1#1 - Sub Heading' }] as readonly HeadingNodeData[],
         },
         {
           description: 'multiple depth-1 headings',

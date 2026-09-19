@@ -4,8 +4,9 @@
  * Implements the identifier grammar defined in the ECR specification (1#9.2).
  *
  * Grammar:
- *   DocID     ::= Digit+ ("." Digit+)*
- *   SectionID ::= DocID ("." Digit+)+
+ *   DocID       ::= Digit+ ("." Digit+)*
+ *   SectionPath ::= Digit+ ("." Digit+)*
+ *   SectionID   ::= DocID "#" SectionPath
  *
  * All operations are deterministic and side-effect-free.
  */
@@ -43,12 +44,6 @@ export type SectionIdParseResult =
     }
   | { readonly valid: false };
 
-/**
- * Represents the outcome of extracting a DocID and title from an H1 heading string.
- *
- * When extraction succeeds, `valid` is `true` and both `docId` and `title` are present.
- * When extraction fails, `valid` is `false`.
- */
 /**
  * Represents the outcome of extracting a SectionID and title from a sub-heading.
  *
@@ -150,8 +145,9 @@ const SECTION_HEADING_PATTERN: RegExp =
  * as defined in the ECR specification (1#9.2).
  *
  * Grammar:
- *   DocID     ::= Digit+ ("." Digit+)*
- *   SectionID ::= DocID ("." Digit+)+
+ *   DocID       ::= Digit+ ("." Digit+)*
+ *   SectionPath ::= Digit+ ("." Digit+)*
+ *   SectionID   ::= DocID "#" SectionPath
  *
  * This class encapsulates all identifier-level grammar operations
  * required by the ECR structural specification.

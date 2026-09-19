@@ -7,7 +7,7 @@
  * contributing guides, changelogs and licences. These have no DocID by design
  * and must not be reported as structurally invalid.
  *
- * File discovery is the host's responsibility (see 0.1), so this module is
+ * File discovery is the host's responsibility (spec 1#3.2), so this module is
  * offered for hosts to apply when assembling a corpus rather than being
  * enforced inside the rules themselves.
  */

@@ -4,7 +4,7 @@ import jsdoc from 'eslint-plugin-jsdoc';
 import tsdoc from 'eslint-plugin-tsdoc';
 import noInlineObjectTypes from './eslint-rules/no-inline-object-types.js';
 
-const lensPlugin = {
+const ecrPlugin = {
   rules: {
     'no-inline-object-types': noInlineObjectTypes,
   },
@@ -24,7 +24,7 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
-    plugins: { jsdoc, tsdoc, lens: lensPlugin },
+    plugins: { jsdoc, tsdoc, ecr: ecrPlugin },
     rules: {
       // -- 2.2: Explicit typing on all boundaries --
       '@typescript-eslint/explicit-function-return-type': 'error',
@@ -39,7 +39,7 @@ export default tseslint.config(
       '@typescript-eslint/explicit-member-accessibility': 'error',
 
       // -- 2.4: Named types for object shapes --
-      'lens/no-inline-object-types': 'error',
+      'ecr/no-inline-object-types': 'error',
 
       // -- 2.1: Readability --
       'no-nested-ternary': 'error',
@@ -86,7 +86,7 @@ export default tseslint.config(
       'arrow-body-style': 'off',
       'jsdoc/require-jsdoc': 'off',
       'tsdoc/syntax': 'off',
-      'lens/no-inline-object-types': 'off',
+      'ecr/no-inline-object-types': 'off',
     },
   },
 );

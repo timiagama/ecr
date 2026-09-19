@@ -23,8 +23,8 @@
  * 2. **Cross-document duplicate SectionID detection**: The corpus
  *    validator only sees SectionIDs that survive per-document
  *    extraction (i.e., those that pass ECR102). A heading like
- *    `## 3.1.1 - X` inside a document with DocID `4.1` fails ECR102
- *    (does not extend DocID) and is never extracted — yet its
+ *    `## 3.1#1 - X` inside a document with DocID `4.1` fails ECR102
+ *    (it names another document) and is never extracted — yet its
  *    SectionID text is still globally significant. The facade
  *    performs an additional cross-document duplicate check by
  *    collecting SectionIDs from both extracted sections and
@@ -311,10 +311,10 @@ export class Ecr {
    * The standard {@link CorpusValidator} only checks extracted sections
    * (those that pass ECR102). This method extends coverage to include
    * SectionIDs mentioned in per-document diagnostics — for example,
-   * a heading `## 3.1.1 - X` inside a document with DocID `4.1` fails
-   * ECR102 (prefix mismatch) but the SectionID `3.1.1` is still present
-   * in the diagnostic's `sectionId` field. If another document also
-   * defines `3.1.1`, that is a corpus-level duplicate.
+   * a heading `## 3.1#1 - X` inside a document with DocID `4.1` fails
+   * ECR102 (it names another document) but the SectionID `3.1#1` is still
+   * present in the diagnostic's `sectionId` field. If document `3.1` also
+   * defines `3.1#1`, that is a corpus-level duplicate.
    *
    * This method only emits diagnostics for duplicates NOT already
    * detected by the standard corpus validator (i.e., duplicates involving

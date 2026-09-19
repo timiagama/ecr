@@ -1,7 +1,6 @@
 /**
  * Tests for InlineReferenceRule (ECR104)
  *
- * Derived from the behavioural contract for ecr-wi6-inline-reference-rule.
  * Covers all 25 scenarios across 7 features:
  *   - Detection of `see` and `per` keywords (6 scenarios)
  *   - No false positives from non-keyword text (4 scenarios)
@@ -10,8 +9,6 @@
  *   - Multiple inline references in one text node (3 scenarios)
  *   - Section context tracking (2 scenarios)
  *   - Edge cases -- keyword boundaries and case sensitivity (4 scenarios)
- *
- * Session: 20260221T183022Z_39d39b
  */
 
 import { describe, it, expect } from 'vitest';

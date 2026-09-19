@@ -1,11 +1,7 @@
 /**
  * Black-box test suite for SectionHierarchyRule
  *
- * Derived exclusively from the Behavioural Contract (24 scenarios)
- * exercised through the Interface Proposal's SectionHierarchyRule class.
- *
- * Work Item: ecr-wi4-section-hierarchy-rule
- * Session:   20260221T143206Z_3iobq0
+ * 24 scenarios, exercised through the public SectionHierarchyRule class.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -512,7 +508,7 @@ describe('Feature: Heading Separator Validation', () => {
 
       expect(
         sectionIds,
-        '@SCN-SEP-VARIANTS: expected the en-dash heading to yield SectionID 3.1.1',
+        '@SCN-SEP-VARIANTS: expected the en-dash heading to yield SectionID 3.1#1',
       ).toContain('3.1#1');
     });
   });
@@ -600,7 +596,7 @@ describe('Feature: Section Node Extraction with Parent Derivation', () => {
 
       expect(
         h2Section,
-        '@SCN-PARENT-H2: expected a section node with id "3.1.1"',
+        '@SCN-PARENT-H2: expected a section node with id "3.1#1"',
       ).toBeDefined();
 
       expect(
@@ -637,12 +633,12 @@ describe('Feature: Section Node Extraction with Parent Derivation', () => {
 
       expect(
         h3Section,
-        '@SCN-PARENT-H3: expected a section node with id "3.1.1.1"',
+        '@SCN-PARENT-H3: expected a section node with id "3.1#1.1"',
       ).toBeDefined();
 
       expect(
         h3Section!.parentId,
-        '@SCN-PARENT-H3: expected parentId to be "3.1.1"',
+        '@SCN-PARENT-H3: expected parentId to be "3.1#1"',
       ).toBe('3.1#1');
     });
   });
@@ -670,7 +666,7 @@ describe('Feature: Section Node Extraction with Parent Derivation', () => {
 
       expect(
         secondH2Section,
-        '@SCN-PARENT-REVERT: expected a section node with id "3.1.2"',
+        '@SCN-PARENT-REVERT: expected a section node with id "3.1#2"',
       ).toBeDefined();
 
       expect(
@@ -705,12 +701,12 @@ describe('Feature: Section Node Extraction with Parent Derivation', () => {
 
       expect(
         sectionB,
-        '@SCN-PARENT-STACK-RESET: expected a section node with id "3.1.2"',
+        '@SCN-PARENT-STACK-RESET: expected a section node with id "3.1#2"',
       ).toBeDefined();
 
       expect(
         sectionB!.parentId,
-        '@SCN-PARENT-STACK-RESET: expected "3.1.2" parentId to be "3.1"',
+        '@SCN-PARENT-STACK-RESET: expected "3.1#2" parentId to be "3.1"',
       ).toBe('3.1');
 
       const subB1: SectionNode | undefined = findSectionById(
@@ -720,12 +716,12 @@ describe('Feature: Section Node Extraction with Parent Derivation', () => {
 
       expect(
         subB1,
-        '@SCN-PARENT-STACK-RESET: expected a section node with id "3.1.2.1"',
+        '@SCN-PARENT-STACK-RESET: expected a section node with id "3.1#2.1"',
       ).toBeDefined();
 
       expect(
         subB1!.parentId,
-        '@SCN-PARENT-STACK-RESET: expected "3.1.2.1" parentId to be "3.1.2"',
+        '@SCN-PARENT-STACK-RESET: expected "3.1#2.1" parentId to be "3.1#2"',
       ).toBe('3.1#2');
     });
   });
@@ -765,7 +761,7 @@ describe('Feature: Duplicate SectionID Detection', () => {
 
       expect(
         hasDuplicateError,
-        '@SCN-DUP-DETECTED: expected an error diagnostic indicating SectionID "3.1.1" is duplicated',
+        '@SCN-DUP-DETECTED: expected an error diagnostic indicating SectionID "3.1#1" is duplicated',
       ).toBe(true);
     });
   });
@@ -940,7 +936,7 @@ describe('Feature: Title Extraction from Section Headings', () => {
 
       expect(
         section,
-        '@SCN-TITLE-EXTRACT: expected a section node with id "3.1.1"',
+        '@SCN-TITLE-EXTRACT: expected a section node with id "3.1#1"',
       ).toBeDefined();
 
       expect(
@@ -969,7 +965,7 @@ describe('Feature: Title Extraction from Section Headings', () => {
 
       expect(
         section,
-        '@SCN-TITLE-HYPHENS: expected a section node with id "3.1.1"',
+        '@SCN-TITLE-HYPHENS: expected a section node with id "3.1#1"',
       ).toBeDefined();
 
       expect(

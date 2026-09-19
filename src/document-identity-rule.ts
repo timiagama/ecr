@@ -9,9 +9,6 @@
  * the "exactly one H1 with a valid DocID and title" constraint. It delegates
  * identifier parsing to {@link IdentifierGrammar} and emits {@link Diagnostic}
  * objects for any violations.
- *
- * Work item: ecr-wi3-document-identity-rule
- * Session:   20260220T220013Z_47df9d
  */
 
 import type { DocID, Diagnostic, DiagnosticSeverity, PositionRange } from './types.js';
@@ -157,7 +154,7 @@ const DIAGNOSTIC_SEVERITY: DiagnosticSeverity = 'error';
  * const rule = new DocumentIdentityRule({ uri: 'file:///doc.md', grammar });
  *
  * rule.evaluateHeading({ depth: 1, text: '3.1 - My Document', range: someRange });
- * rule.evaluateHeading({ depth: 2, text: '3.1.1 - Section', range: anotherRange });
+ * rule.evaluateHeading({ depth: 2, text: '3.1#1 - Section', range: anotherRange });
  *
  * const result: DocumentIdentityRuleResult = rule.finalise();
  * ```

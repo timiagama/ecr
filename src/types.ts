@@ -24,11 +24,11 @@ export type DocID = string;
 /**
  * Stable section identity.
  *
- * Grammar: `DocID ("." Digit+)+`
+ * Grammar: `DocID "#" SectionPath`, where `SectionPath ::= Digit+ ("." Digit+)*`
  *
- * A SectionID always extends the owning document's DocID.
+ * The text before the `#` is the owning document's DocID.
  *
- * @example "3.1.2"
+ * @example "3.1#2"
  */
 export type SectionID = string;
 

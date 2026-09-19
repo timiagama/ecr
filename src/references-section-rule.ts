@@ -14,9 +14,6 @@
  *
  * Extracted artefacts:
  *   - {@link ReferenceEdge} for each valid list item in the References section
- *
- * Work item: ecr-wi5-references-section-rule
- * Session:   20260221T153150Z_mg571r
  */
 
 import type {
@@ -251,7 +248,7 @@ const SEPARATOR_PATTERN: RegExp = / [-–—] /;
  * });
  *
  * rule.evaluateHeading({ depth: 1, text: '5.1 - My Document' });
- * rule.evaluateHeading({ depth: 2, text: '5.1.1 - Section' });
+ * rule.evaluateHeading({ depth: 2, text: '5.1#1 - Section' });
  * rule.evaluateHeading({ depth: 2, text: 'References' });
  *
  * rule.evaluateListItem({

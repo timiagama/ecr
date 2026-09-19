@@ -1,11 +1,7 @@
 /**
  * Black-box test suite for IdentifierGrammar
  *
- * Derived exclusively from the Behavioural Contract (SCN-001 through SCN-019)
- * exercised through the Interface Proposal's IdentifierGrammar class.
- *
- * Work Item: ecr-wi2-docid-sectionid-grammar
- * Session: 20260220T192125Z_6lacvb
+ * Scenarios SCN-001 through SCN-019, exercised through the public IdentifierGrammar class.
  */
 
 import { describe, it, expect } from 'vitest';

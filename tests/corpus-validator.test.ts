@@ -304,7 +304,7 @@ describe('Feature: SectionID Global Uniqueness', () => {
     expect(index.sectionIds['2.0#1']).toBe('file:///b.md');
   });
 
-  it('SCN-004: Two documents define the same SectionID "3.1.2"', () => {
+  it('SCN-004: Two documents define the same SectionID "3.1#2"', () => {
     const documents: readonly CorpusDocumentEntry[] = [
       buildValidEntry('file:///a.md', '3.1', {
         sections: [
@@ -322,7 +322,7 @@ describe('Feature: SectionID Global Uniqueness', () => {
 
     const corpusResult: CorpusResult = validator.validateCorpus(documents);
 
-    // An error diagnostic for duplicate SectionID "3.1.2"
+    // An error diagnostic for duplicate SectionID "3.1#2"
     const duplicateDiagnostics: readonly Diagnostic[] =
       corpusResult.diagnostics.filter((diagnostic: Diagnostic) => {
         return diagnostic.severity === 'error'
@@ -456,7 +456,7 @@ describe('Feature: Inline Reference Target Resolution', () => {
 
     const corpusResult: CorpusResult = validator.validateCorpus(documents);
 
-    // No unresolved-inline-reference diagnostic for toId "3.1.2"
+    // No unresolved-inline-reference diagnostic for toId "3.1#2"
     const unresolvedInlineDiagnostics: readonly Diagnostic[] =
       corpusResult.diagnostics.filter((diagnostic: Diagnostic) => {
         return diagnostic.message.includes('3.1#2')
@@ -564,7 +564,7 @@ describe('Feature: Inline Reference Parent DocID Declaration', () => {
 
     const corpusResult: CorpusResult = validator.validateCorpus(documents);
 
-    // No undeclared-reference diagnostic for inline target "3.1.2"
+    // No undeclared-reference diagnostic for inline target "3.1#2"
     const undeclaredDiagnostics: readonly Diagnostic[] =
       corpusResult.diagnostics.filter((diagnostic: Diagnostic) => {
         return diagnostic.message.includes('3.1#2')

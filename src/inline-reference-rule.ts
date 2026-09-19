@@ -7,8 +7,8 @@
  *   - 1#10.7 -- InlineReferenceEdge
  *   - 1#6.3 -- Inline References (overview)
  *
- * This rule operates on text node data supplied by the document visitor
- * (WI-7). The visitor handles AST filtering (code blocks, inline code,
+ * This rule operates on text node data supplied by the document visitor.
+ * The visitor handles AST filtering (code blocks, inline code,
  * HTML, link URLs) and heading context tracking. This rule receives only
  * text nodes that are valid for inline reference detection, along with
  * the current section context.
@@ -16,8 +16,8 @@
  * The rule detects `see TargetID` and `per TargetID` forms where:
  *   - The keyword (`see` or `per`) is preceded by a word boundary
  *     (start of string, whitespace, or punctuation such as `(`)
- *   - The keyword is case-insensitive (first letter may be capitalised)
- *   - TargetID conforms to the DocID/SectionID grammar (`Digit+ ("." Digit+)*`)
+ *   - The keyword's first letter may be capitalised (`see`, `See`, `per`, `Per`)
+ *   - TargetID is a DocID, optionally followed by `#` and a section path
  *   - TargetID is maximally matched and terminated by a non-digit/non-dot
  *     character or end of string (a period followed by a non-digit is
  *     treated as punctuation, not part of the TargetID)
@@ -30,9 +30,6 @@
  * Extracted artefacts:
  *   - {@link InlineReferenceEdge} for each valid inline reference whose
  *     parent DocID is declared or is a self-reference
- *
- * Work item: WI-6 (Inline Reference Rule)
- * Session:   20260221T183022Z_39d39b
  */
 
 import type {
@@ -74,7 +71,7 @@ export interface TextNodeData {
   /**
    * Plain text content of the text node.
    *
-   * @example "Guardrail requirements are enforced per 3.1.2."
+   * @example "Guardrail requirements are enforced per 3.1#2."
    */
   readonly text: string;
 
@@ -126,9 +123,9 @@ export interface InlineReferenceRuleOptions {
 
   /**
    * The DocID established by the Document Identity Rule for this document.
-   * Used for self-reference detection: inline references whose TargetID
-   * starts with this DocID are treated as self-references and do not
-   * require a declaration in the References section.
+   * Used for self-reference detection: an inline reference whose target
+   * DocID (the TargetID itself, or the text before its `#`) equals this
+   * DocID needs no declaration in the References section.
    */
   readonly docId: DocID;
 
@@ -138,7 +135,7 @@ export interface InlineReferenceRuleOptions {
   readonly grammar: IdentifierGrammar;
 
   /**
-   * The set of DocIDs declared in the References section (from WI-5's output).
+   * The set of DocIDs declared in the References section (the References Section Rule's output).
    *
    * Used to determine whether an inline reference's parent DocID has been
    * declared. If a TargetID's parent DocID is not in this set and is not
@@ -180,7 +177,7 @@ export interface DetectedInlineReference {
 
   /**
    * The TargetID extracted from the text, maximally matched.
-   * Conforms to the DocID/SectionID grammar: `Digit+ ("." Digit+)*`.
+   * A DocID (`8.1`) or a SectionID (`8.1#3.2`).
    */
   readonly targetId: string;
 }
@@ -195,8 +192,8 @@ export interface DetectedInlineReference {
  * Matches the pattern: (word boundary)(see|per)(whitespace)(TargetID)
  *
  * Word boundary is defined as start of string, whitespace, or punctuation
- * such as `(`. The keyword is case-insensitive (first letter may be
- * capitalised). TargetID is maximally matched as `Digit+ ("." Digit+)*`.
+ * such as `(`. The keyword's first letter may be capitalised. TargetID is
+ * maximally matched as a DocID with an optional `#` and section path.
  *
  * A trailing period followed by a non-digit is treated as sentence
  * punctuation, not part of the TargetID. The regex handles this because
@@ -222,8 +219,8 @@ const INLINE_REFERENCE_PATTERN: RegExp = /(?:^|[\s(])([Ss]ee|[Pp]er)\s+(\d+(?:\.
  * - The keyword is preceded by a word boundary (start of string, whitespace,
  *   or punctuation) to prevent false positives from words like "oversee"
  *   or "hyperparameter"
- * - The keyword is case-insensitive (`See`, `Per` with capital first letter
- *   are valid); the `kind` field normalises to lowercase
+ * - The keyword's first letter may be capitalised (`See`, `Per`); the
+ *   `kind` field normalises to lowercase
  * - TargetID conforms to the identifier grammar and is maximally matched
  * - The parent DocID of the TargetID is declared in the References section,
  *   or the TargetID is a self-reference to the document's own DocID
@@ -256,14 +253,14 @@ const INLINE_REFERENCE_PATTERN: RegExp = /(?:^|[\s(])([Ss]ee|[Pp]er)\s+(\d+(?:\.
  * });
  *
  * rule.evaluateTextNode(
- *   { text: 'Guardrail logic per 3.1.2 and retry semantics see 8.1.3.' },
- *   '5.1.1',
+ *   { text: 'Guardrail logic per 3.1#2 and retry semantics see 8.1.' },
+ *   '5.1#1',
  * );
  *
  * const result: InlineReferenceRuleResult = rule.finalise();
  * // result.inlineReferences has two edges:
- * //   { fromId: '5.1.1', toId: '3.1.2', kind: 'per' }
- * //   { fromId: '5.1.1', toId: '8.1.3', kind: 'see' }
+ * //   { fromId: '5.1#1', toId: '3.1#2', kind: 'per' }
+ * //   { fromId: '5.1#1', toId: '8.1', kind: 'see' }
  * ```
  */
 export class InlineReferenceRule {
@@ -398,8 +395,8 @@ export class InlineReferenceRule {
    * Detects all occurrences of `see TargetID` or `per TargetID` where:
    * - The keyword is preceded by a word boundary (start of string, whitespace,
    *   or punctuation such as `(`)
-   * - The keyword is case-insensitive (`See`, `Per` with capital first letter)
-   * - TargetID is a maximal match of `Digit+ ("." Digit+)*`
+   * - The keyword's first letter may be capitalised (`See`, `Per`)
+   * - TargetID is a maximal match of a DocID with an optional `#` and section path
    * - A period followed by a non-digit character terminates the TargetID
    *   (the period is treated as sentence punctuation, not part of the ID)
    *
@@ -444,10 +441,10 @@ export class InlineReferenceRule {
    * Determines whether a TargetID's parent DocID is declared in the
    * References section or is a self-reference to the document's own DocID.
    *
-   * The method checks whether any prefix of the TargetID (from 1 segment
-   * up to the full ID) exists in the declared DocIDs set or starts with
-   * the document's own DocID. If no prefix matches, the TargetID is
-   * considered an undeclared reference.
+   * The target's DocID is read directly — the TargetID itself, or the text
+   * before its `#` — and compared exactly with the document's own DocID and
+   * the declared set. No prefix matching is involved, so `8.1.3` is not
+   * covered by a declaration of `8.1`.
    *
    * @param targetId - The TargetID to check
    * @returns `true` if the TargetID is declared or is a self-reference,

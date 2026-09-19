@@ -52,10 +52,11 @@ export interface CorpusStatisticsReport {
 /**
  * Derives a statistical summary from a corpus validation result.
  *
- * Only documents that produced extracted artefacts contribute. A document that
- * failed structural validation has no reliable structure to count, and
- * including a partial reading of it would make the totals depend on how far
- * parsing happened to get.
+ * Only documents that produced extracted artefacts contribute, which means
+ * every document with a valid H1 DocID. A document with other structural
+ * errors still counts, but only the parts that passed validation: a malformed
+ * heading or References entry is never extracted, so it adds nothing to the
+ * totals. A document with no recoverable DocID contributes nothing at all.
  */
 export class CorpusStatistics {
   /** The validation result to summarise. */

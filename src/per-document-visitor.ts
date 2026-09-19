@@ -1,5 +1,5 @@
 /**
- * Per-Document Visitor (WI-7)
+ * Per-Document Visitor
  *
  * Orchestrates all four ECR rules (ECR101--ECR104) over a single Markdown
  * document, producing a composite {@link LintResult}.
@@ -26,9 +26,6 @@
  *   - 1#9.6 -- References Section Rules [ECR103]
  *   - 1#10.2 -- LintResult
  *   - 1#10.4 -- ExtractedDocument
- *
- * Work item: WI-7 (Per-Document Visitor)
- * Session:   20260221T195536Z_de9515
  */
 
 // ---------------------------------------------------------------------------
@@ -349,19 +346,11 @@ export class PerDocumentVisitor {
     const declaredDocIds: ReadonlySet<DocID> =
       this.extractDeclaredDocIds(referencesForExtraction);
 
-    // Retrieve sections from ECR102
-    const sectionsResult: SectionHierarchyRuleResult | undefined =
-      passOneResult.sectionsResult;
-
-    const sectionsForContext: readonly SectionNode[] =
-      sectionsResult !== undefined ? sectionsResult.sections : [];
-
     // Run ECR104
     const inlineResult: InlineReferencesPassResult =
       this.executeInlineReferencesPass(
         root,
         passOneResult.identityResult.identity.docId,
-        sectionsForContext,
         declaredDocIds,
       );
 
@@ -608,16 +597,12 @@ export class PerDocumentVisitor {
    *
    * @param root - The parsed MDAST root node
    * @param docId - The document's established DocID
-   * @param _sections - The extracted section nodes (reserved for future section
-   *                    context tracking; currently section context is determined
-   *                    by re-parsing headings during the AST walk)
    * @param declaredDocIds - The set of DocIDs declared in the References section
    * @returns The intermediate result from the inline references pass
    */
   private executeInlineReferencesPass(
     root: MdastRoot,
     docId: DocID,
-    _sections: readonly SectionNode[],
     declaredDocIds: ReadonlySet<DocID>,
   ): InlineReferencesPassResult {
     const inlineReferenceRule: InlineReferenceRule = new InlineReferenceRule({
@@ -653,9 +638,8 @@ export class PerDocumentVisitor {
    * ancestor types for exclusion filtering and updating section context
    * when headings are encountered.
    *
-   * This custom walk replaces `unist-util-visit-parents` to avoid a
-   * dependency that is not available in this project. It provides the
-   * same depth-first, pre-order traversal with full ancestor type tracking.
+   * A hand-written depth-first, pre-order walk, so that the ancestor types
+   * needed for exclusion filtering are tracked without another dependency.
    *
    * @param node - The current MDAST node being visited
    * @param ancestorTypes - The types of all ancestor nodes from root to parent
