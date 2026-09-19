@@ -1129,3 +1129,28 @@ describe('Feature: A section path continues the path of the heading it sits unde
     expect(result.diagnostics.map((diagnostic) => diagnostic.sectionId)).toEqual(['4.1#1']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Feature: An unnumbered sub-heading is reported as unnumbered
+// ---------------------------------------------------------------------------
+
+describe('Feature: The diagnostic says what is wrong with a heading', () => {
+  it('says an unnumbered heading is not numbered, and shows the form it should take', () => {
+    const result: SectionHierarchyRuleResult = evaluateDocument('5.1', '5.1 - Title', [
+      { depth: 2, text: 'Non-functional Requirements' },
+    ]);
+
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.message).toContain('is not numbered');
+    expect(result.diagnostics[0]!.message).toContain('"5.1#1 - Non-functional Requirements"');
+  });
+
+  it('keeps the separator message for a numbered heading that has no dash', () => {
+    const result: SectionHierarchyRuleResult = evaluateDocument('5.1', '5.1 - Title', [
+      { depth: 2, text: '5.1#1 Requirements' },
+    ]);
+
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.message).toContain('no recognisable separator');
+  });
+});

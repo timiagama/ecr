@@ -131,6 +131,12 @@ interface CollectedH1Heading {
  */
 const DIAGNOSTIC_SEVERITY: DiagnosticSeverity = 'error';
 
+/**
+ * Matches heading text that begins with a number, i.e. one that at least
+ * attempts a DocID.
+ */
+const STARTS_WITH_DIGIT_PATTERN: RegExp = /^\s*\d/;
+
 // ---------------------------------------------------------------------------
 // Rule class
 // ---------------------------------------------------------------------------
@@ -330,6 +336,15 @@ export class DocumentIdentityRule {
       return undefined;
     }
 
+    // An H1 with no number at all is the usual case in an unconverted
+    // document, and deserves a message that says so.
+    if (!STARTS_WITH_DIGIT_PATTERN.test(heading.text)) {
+      return this.createDiagnostic(
+        `H1 "${heading.text.trim()}" is not numbered. The H1 carries the document's DocID, ` +
+        `for example "3.1 - ${heading.text.trim()}".`,
+        heading.range,
+      );
+    }
 
     const diagnostic: Diagnostic = this.createDiagnostic(
       `H1 heading has no recognisable separator. ` +

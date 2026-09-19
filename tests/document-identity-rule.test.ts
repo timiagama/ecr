@@ -683,3 +683,20 @@ describe('Feature: Document Identity Rule [ECR101]', () => {
     });
   });
 });
+
+describe('Feature: The diagnostic says what is wrong with an H1', () => {
+  it('says an unnumbered H1 is not numbered, and shows the form it should take', () => {
+    const result: DocumentIdentityRuleResult = evaluateHeadings([{ depth: 1, text: 'Payment Processing' }]);
+
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.message).toContain('is not numbered');
+    expect(result.diagnostics[0]!.message).toContain('"3.1 - Payment Processing"');
+  });
+
+  it('keeps the separator message for a numbered H1 that has no dash', () => {
+    const result: DocumentIdentityRuleResult = evaluateHeadings([{ depth: 1, text: '3.1 Payment Processing' }]);
+
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.message).toContain('no recognisable separator');
+  });
+});

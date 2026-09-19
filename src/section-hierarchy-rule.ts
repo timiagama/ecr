@@ -137,6 +137,12 @@ const SECTION_HIERARCHY_DIAGNOSTIC_SEVERITY: DiagnosticSeverity = 'error';
  */
 const SECTION_SEPARATOR_PATTERN: RegExp = /\s*[-–—]\s*/;
 
+/**
+ * Matches heading text that begins with a number, i.e. one that at least
+ * attempts an identifier.
+ */
+const STARTS_WITH_DIGIT_PATTERN: RegExp = /^\s*\d/;
+
 // ---------------------------------------------------------------------------
 // Rule class
 // ---------------------------------------------------------------------------
@@ -451,6 +457,15 @@ export class SectionHierarchyRule {
       return undefined;
     }
 
+    // A heading with no number at all is far more common than a numbered
+    // heading missing its dash, and deserves a message that says so.
+    if (!STARTS_WITH_DIGIT_PATTERN.test(headingText)) {
+      return this.createDiagnostic(
+        `Heading "${headingText.trim()}" is not numbered. Every sub-heading carries a SectionID: ` +
+        `the DocID, "#", and a section path, for example "${this.docId}#1 - ${headingText.trim()}".`,
+        range,
+      );
+    }
 
     const diagnostic: Diagnostic = this.createDiagnostic(
       `Heading has no recognisable separator. ` +
