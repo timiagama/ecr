@@ -377,11 +377,26 @@ export class SectionHierarchyRule {
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: parent may be DocID or SectionID
+    const parentId: DocID | SectionID | undefined = this.lookUpParentId(depth);
+
+    // 8. Check that the section path continues its parent's path
+    const misplacedDiagnostic: Diagnostic | undefined = this.validatePathAgainstParent(
+      parseResult.sectionPath,
+      parentId,
+      sectionId,
+      range,
+    );
+
+    if (misplacedDiagnostic !== undefined) {
+      this.collectedDiagnostics.push(misplacedDiagnostic);
+      this.updateHeadingStack(sectionId, depth);
+      return;
+    }
+
     // All validations passed — extract SectionNode
     this.encounteredSectionIds.add(sectionId);
 
-    // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: parent may be DocID or SectionID
-    const parentId: DocID | SectionID | undefined = this.lookUpParentId(depth);
     const title: string = this.extractHeadingTitle(headingText);
 
     const sectionNode: SectionNode = {
@@ -444,6 +459,55 @@ export class SectionHierarchyRule {
     );
 
     return diagnostic;
+  }
+
+  /**
+   * Checks that a sub-section's path continues the path of the heading it
+   * sits under, so that a SectionID locates itself: `3.1#2.1` must sit under
+   * `3.1#2`, not under `3.1#1`.
+   *
+   * Only a parent that was itself extracted is checked against. A parent
+   * that failed validation has already been reported, and measuring its
+   * children against it would repeat that error rather than add one.
+   *
+   * @param sectionPath - The section path of the heading being evaluated
+   * @param parentId - The identifier of the heading it sits under, if any
+   * @param sectionId - The SectionID of the heading being evaluated
+   * @param range - Optional positional range for the diagnostic
+   * @returns A diagnostic if the path does not continue its parent's, or `undefined`
+   */
+  private validatePathAgainstParent(
+    sectionPath: string,
+    // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: parent may be DocID or SectionID
+    parentId: DocID | SectionID | undefined,
+    sectionId: SectionID,
+    range?: PositionRange,
+  ): Diagnostic | undefined {
+    if (parentId === undefined || !this.encounteredSectionIds.has(parentId)) {
+      return undefined;
+    }
+
+    const parentParse: SectionIdParseResult = this.grammar.parseSectionId(parentId);
+
+    if (!parentParse.valid) {
+      return undefined;
+    }
+
+    const segments: readonly string[] = sectionPath.split('.');
+    const ownPrefix: string = segments.slice(0, -1).join('.');
+
+    if (ownPrefix === parentParse.sectionPath) {
+      return undefined;
+    }
+
+    const expectedId: string = `${this.docId}#${parentParse.sectionPath}.${segments[segments.length - 1] ?? ''}`;
+
+    return this.createDiagnostic(
+      `SectionID "${sectionId}" sits under "${parentId}", so its section path must begin ` +
+      `"${parentParse.sectionPath}." (for example "${expectedId}").`,
+      range,
+      sectionId,
+    );
   }
 
   /**

@@ -115,6 +115,8 @@ Rules:
     
 - The number of section-path segments (after the `#`) must correspond to heading depth: one for `##`, two for `###`, and so on.
     
+- A sub-section continues its parent's number: under `## 3.1#2`, the `###` headings are `3.1#2.1`, `3.1#2.2`, and so on.
+    
 - A dash separates the SectionID from the title, as in the H1.
     
 - Section numbers must not skip structural levels.

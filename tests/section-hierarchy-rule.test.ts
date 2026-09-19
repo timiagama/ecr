@@ -1064,11 +1064,19 @@ function buildIntermediateHeadings(
 ): HeadingNodeData[] {
   const headings: HeadingNodeData[] = [];
 
-  // A heading at depth d carries a section path of exactly
-  // d - 1 segments, independent of the DocID's own depth. Intermediate
-  // headings therefore run "<docId>#1", "<docId>#1.1", and so on.
+  // A heading at depth d carries a section path of exactly d - 1 segments,
+  // and must continue the path of the heading above it. Intermediate headings
+  // are therefore the prefixes of the target's own path ("3.1#1", "3.1#1.2"
+  // above "3.1#1.2.1"), falling back to "1" segments when the target's path
+  // is too short to supply them (the segment-count failure scenarios).
+  const targetPath: readonly string[] =
+    /^[\d.]+#([\d.]+)/.exec(targetHeadingText ?? '')?.[1]?.split('.') ?? [];
+
   for (let depth = 2; depth < targetDepth; depth++) {
-    const sectionPath: string = new Array(depth - 1).fill('1').join('.');
+    const segmentCount: number = depth - 1;
+    const sectionPath: string = targetPath.length > segmentCount
+      ? targetPath.slice(0, segmentCount).join('.')
+      : new Array(segmentCount).fill('1').join('.');
     headings.push({ depth, text: `${docId}#${sectionPath} - Intermediate Section` });
   }
 
@@ -1078,3 +1086,46 @@ function buildIntermediateHeadings(
 
   return headings;
 }
+
+// ---------------------------------------------------------------------------
+// Feature: A section path continues its parent's path
+// ---------------------------------------------------------------------------
+
+describe('Feature: A section path continues the path of the heading it sits under', () => {
+  it('rejects a sub-section numbered for a different parent, and suggests the right number', () => {
+    const result: SectionHierarchyRuleResult = evaluateDocument('5.1', '5.1 - Title', [
+      { depth: 2, text: '5.1#1 - First' },
+      { depth: 3, text: '5.1#2.1 - Misplaced' },
+    ]);
+
+    const misplaced: readonly Diagnostic[] = result.diagnostics.filter(
+      (diagnostic) => diagnostic.sectionId === '5.1#2.1',
+    );
+
+    expect(misplaced).toHaveLength(1);
+    expect(misplaced[0]!.severity).toBe('error');
+    expect(misplaced[0]!.message).toContain('"5.1#1.1"');
+    expect(result.sections.map((section) => section.id)).toEqual(['5.1', '5.1#1']);
+  });
+
+  it('accepts sub-sections that continue their parent, at every depth', () => {
+    const result: SectionHierarchyRuleResult = evaluateDocument('5.1', '5.1 - Title', [
+      { depth: 2, text: '5.1#1 - First' },
+      { depth: 3, text: '5.1#1.1 - A' },
+      { depth: 4, text: '5.1#1.1.3 - B' },
+      { depth: 2, text: '5.1#7 - Seventh' },
+      { depth: 3, text: '5.1#7.2 - C' },
+    ]);
+
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('does not repeat an error against a parent that itself failed validation', () => {
+    const result: SectionHierarchyRuleResult = evaluateDocument('5.1', '5.1 - Title', [
+      { depth: 2, text: '4.1#1 - Belongs Elsewhere' },
+      { depth: 3, text: '5.1#1.1 - Child' },
+    ]);
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.sectionId)).toEqual(['4.1#1']);
+  });
+});

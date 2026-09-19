@@ -523,6 +523,8 @@ DocID = 3.1
 
 A heading that violates the depth-to-section-path rule is invalid.
 
+4. For a heading of depth `d ≥ 3`, the section path without its last segment MUST equal the section path of its parent — the nearest preceding heading of depth `d - 1`. `3.1#2.1` sits under `3.1#2`, never under `3.1#1`. This is what makes a SectionID self-locating: its number alone says where in the document it lives.
+
 A heading separates its identifier from its title with a dash:
 
 ```
