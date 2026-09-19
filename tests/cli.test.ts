@@ -291,6 +291,26 @@ describe('Feature: init', () => {
     ).toBe(EXIT_SUCCESS);
   });
 
+  it('creates the directory when it does not exist yet', () => {
+    const corpus: string = join(workspace, 'fresh-project', 'docs');
+
+    const outcome: CommandOutcome = cli.run(['init', corpus]);
+
+    expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
+    expect(existsSync(join(corpus, 'ECR-NAVIGATION-PROTOCOL.md'))).toBe(true);
+  });
+
+  it('refuses a path that is a file, on stderr', () => {
+    const file: string = join(workspace, 'not-a-directory.md');
+    writeFileSync(file, '# x', 'utf8');
+
+    const outcome: CommandOutcome = cli.run(['init', file]);
+
+    expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
+    expect(outcome.stream).toBe('stderr');
+    expect(outcome.output).toContain('not a directory');
+  });
+
   it('refuses to overwrite an existing protocol', () => {
     const corpus: string = join(workspace, 'init-twice');
     mkdirSync(corpus, { recursive: true });
@@ -312,13 +332,22 @@ describe('Feature: Usage errors', () => {
 
     expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
     expect(outcome.output).toContain('Usage');
+    expect(outcome.stream).toBe('stderr');
   });
 
-  it('shows usage and exits 0 for --help', () => {
+  it('shows usage and exits 0 for --help, on stdout because it was asked for', () => {
     const outcome: CommandOutcome = cli.run(['--help']);
 
     expect(outcome.exitCode).toBe(EXIT_SUCCESS);
     expect(outcome.output).toContain('Usage');
+    expect(outcome.stream).toBe('stdout');
+  });
+
+  it('reports an unknown option on stderr', () => {
+    const outcome: CommandOutcome = cli.run(['lint', '--wat']);
+
+    expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
+    expect(outcome.stream).toBe('stderr');
   });
 
   it('exits 2 when the directory does not exist', () => {
@@ -326,6 +355,7 @@ describe('Feature: Usage errors', () => {
 
     expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
     expect(outcome.output).toContain('Directory not found');
+    expect(outcome.stream).toBe('stderr');
   });
 
   it('exits 2 when the directory holds no Markdown', () => {
@@ -336,5 +366,16 @@ describe('Feature: Usage errors', () => {
 
     expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
     expect(outcome.output).toContain('No Markdown documents');
+    expect(outcome.stream).toBe('stderr');
+  });
+
+  it('reports a failing corpus on stdout: the report is the result, the exit code is the signal', () => {
+    const corpus: string = join(workspace, 'failing-on-stdout');
+    writeDocument(join(corpus, '4.2.md'), '# 4.2 - Contract\n\nNo References section.\n');
+
+    const outcome: CommandOutcome = cli.run(['lint', corpus]);
+
+    expect(outcome.exitCode).toBe(EXIT_VALIDATION_FAILED);
+    expect(outcome.stream).toBe('stdout');
   });
 });

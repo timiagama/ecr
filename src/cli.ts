@@ -34,11 +34,22 @@ import type { ReportFormat } from './cli/diagnostic-reporter.js';
 export type CommandName = 'lint' | 'stats' | 'init';
 
 /**
- * The result of running one command: what to print, and how to exit.
+ * The stream a command's output belongs on.
+ *
+ * Results go to stdout; problems with the invocation itself go to stderr, so
+ * that `--format json` output piped into another tool is never interleaved
+ * with, or replaced by, an error message.
+ */
+export type OutputStream = 'stdout' | 'stderr';
+
+/**
+ * The result of running one command: what to print, where, and how to exit.
  */
 export interface CommandOutcome {
-  /** Text to write to standard output. */
+  /** Text to write. */
   readonly output: string;
+  /** The stream to write it to. */
+  readonly stream: OutputStream;
   /** Process exit code. */
   readonly exitCode: number;
 }
@@ -210,15 +221,16 @@ export class EcrCommandLine {
    * @returns The text to print and the process exit code
    */
   public run(argv: readonly string[]): CommandOutcome {
-    if (argv.includes('--help') || argv.length === 0) {
-      return { output: USAGE_TEXT, exitCode: argv.length === 0 ? EXIT_USAGE_ERROR : EXIT_SUCCESS };
+    if (argv.length === 0) {
+      return this.fail(USAGE_TEXT);
+    }
+
+    if (argv.includes('--help')) {
+      return this.succeed(USAGE_TEXT);
     }
 
     if (argv.includes('--version')) {
-      return {
-        output: `ecr ${this.showPackageVersion()} (ECR spec ${ECR_SPEC_VERSION})\n`,
-        exitCode: EXIT_SUCCESS,
-      };
+      return this.succeed(`ecr ${this.showPackageVersion()} (ECR spec ${ECR_SPEC_VERSION})\n`);
     }
 
     let parsed: ParsedArguments;
@@ -227,20 +239,19 @@ export class EcrCommandLine {
       parsed = this.argumentParser.parse(argv);
     } catch (error: unknown) {
       const message: string = error instanceof Error ? error.message : String(error);
-      return { output: `  ${message}\n${USAGE_TEXT}`, exitCode: EXIT_USAGE_ERROR };
+      return this.fail(`  ${message}\n${USAGE_TEXT}`);
     }
 
     const corpusRoot: string = resolve(parsed.corpusRoot);
 
-    if (!existsSync(corpusRoot) || !statSync(corpusRoot).isDirectory()) {
-      return {
-        output: `  Directory not found: ${parsed.corpusRoot}\n`,
-        exitCode: EXIT_USAGE_ERROR,
-      };
+    // `init` sets a corpus up, so it may create the directory; the other
+    // commands read a corpus that must already exist.
+    if (parsed.command === 'init') {
+      return this.runInit(corpusRoot, parsed.corpusRoot);
     }
 
-    if (parsed.command === 'init') {
-      return this.runInit(corpusRoot);
+    if (!existsSync(corpusRoot) || !statSync(corpusRoot).isDirectory()) {
+      return this.fail(`  Directory not found: ${parsed.corpusRoot}\n`);
     }
 
     return this.runValidation(parsed, corpusRoot);
@@ -258,10 +269,7 @@ export class EcrCommandLine {
     const loaded: LoadedCorpus = loader.load();
 
     if (loaded.documents.length === 0) {
-      return {
-        output: `  No Markdown documents found in ${parsed.corpusRoot}\n`,
-        exitCode: EXIT_USAGE_ERROR,
-      };
+      return this.fail(`  No Markdown documents found in ${parsed.corpusRoot}\n`);
     }
 
     const corpusResult: CorpusResult = new Ecr().validateCorpus(loaded.documents);
@@ -269,52 +277,77 @@ export class EcrCommandLine {
 
     if (parsed.command === 'stats') {
       const statistics: CorpusStatistics = new CorpusStatistics(corpusResult);
-      return { output: reporter.reportStatistics(statistics.summarise()), exitCode: EXIT_SUCCESS };
+      return this.succeed(reporter.reportStatistics(statistics.summarise()));
     }
 
     const output: string = reporter.reportValidation(corpusResult, loaded.excludedPaths);
     const hasErrors: boolean = this.tellCorpusHasErrors(corpusResult);
 
-    return { output, exitCode: hasErrors ? EXIT_VALIDATION_FAILED : EXIT_SUCCESS };
+    // A report of a failing corpus is still the command's result, so it goes
+    // to stdout; only the exit code signals the failure.
+    return {
+      output,
+      stream: 'stdout',
+      exitCode: hasErrors ? EXIT_VALIDATION_FAILED : EXIT_SUCCESS,
+    };
   }
 
   /**
-   * Writes the agent navigation protocol into a corpus directory.
+   * Writes the agent navigation protocol into a corpus directory, creating
+   * the directory if it does not exist yet.
    *
    * @param corpusRoot - Resolved corpus directory
+   * @param displayedRoot - The directory as the user typed it, for messages
    * @returns The text to print and the process exit code
    */
-  private runInit(corpusRoot: string): CommandOutcome {
+  private runInit(corpusRoot: string, displayedRoot: string): CommandOutcome {
     const source: string = join(this.showPackageRoot(), 'protocol', 'navigation-protocol.md');
 
     if (!existsSync(source)) {
-      return {
-        output: '  The packaged navigation protocol could not be found.\n',
-        exitCode: EXIT_USAGE_ERROR,
-      };
+      return this.fail('  The packaged navigation protocol could not be found.\n');
+    }
+
+    if (existsSync(corpusRoot) && !statSync(corpusRoot).isDirectory()) {
+      return this.fail(`  ${displayedRoot} exists but is not a directory.\n`);
     }
 
     const destination: string = join(corpusRoot, PROTOCOL_FILENAME);
 
     if (existsSync(destination)) {
-      return {
-        output:
-          `  ${PROTOCOL_FILENAME} already exists in that directory.\n` +
-          '  Delete it first if you want the packaged version.\n',
-        exitCode: EXIT_USAGE_ERROR,
-      };
+      return this.fail(
+        `  ${PROTOCOL_FILENAME} already exists in that directory.\n` +
+        '  Delete it first if you want the packaged version.\n',
+      );
     }
 
     mkdirSync(corpusRoot, { recursive: true });
     copyFileSync(source, destination);
 
-    return {
-      output:
-        `\n  Wrote ${PROTOCOL_FILENAME}\n\n` +
-        '  Point your coding agent at that file before it works on this corpus.\n' +
-        '  It is the half that does the navigating; the linter only checks structure.\n\n',
-      exitCode: EXIT_SUCCESS,
-    };
+    return this.succeed(
+      `\n  Wrote ${join(displayedRoot, PROTOCOL_FILENAME)}\n\n` +
+      '  Point your coding agent at that file before it works on this corpus.\n' +
+      '  It is the half that does the navigating; the linter only checks structure.\n\n',
+    );
+  }
+
+  /**
+   * Builds a successful outcome, written to stdout.
+   *
+   * @param output - The text to print
+   * @returns The outcome
+   */
+  private succeed(output: string): CommandOutcome {
+    return { output, stream: 'stdout', exitCode: EXIT_SUCCESS };
+  }
+
+  /**
+   * Builds the outcome of an invocation that could not run, written to stderr.
+   *
+   * @param output - The message to print
+   * @returns The outcome
+   */
+  private fail(output: string): CommandOutcome {
+    return { output, stream: 'stderr', exitCode: EXIT_USAGE_ERROR };
   }
 
   /**

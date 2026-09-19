@@ -106,4 +106,12 @@ describe('Feature: The installed binary runs when reached through a symlink', ()
     expect(run.status, run.stdout).toBe(1);
     expect(run.stdout).toContain('ECR103');
   });
+
+  it('writes a usage error to stderr, leaving stdout empty for anything piping it', () => {
+    const run: SpawnSyncReturns<string> = runLinkedBinary(['lint', join(workspace, 'missing'), '--format', 'json']);
+
+    expect(run.status).toBe(2);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('Directory not found');
+  });
 });

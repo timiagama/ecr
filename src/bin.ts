@@ -15,5 +15,5 @@ import { EcrCommandLine } from './cli.js';
 import type { CommandOutcome } from './cli.js';
 
 const result: CommandOutcome = new EcrCommandLine().run(process.argv.slice(2));
-process.stdout.write(result.output);
+process[result.stream].write(result.output);
 process.exitCode = result.exitCode;
