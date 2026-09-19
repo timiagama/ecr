@@ -423,9 +423,9 @@ Then your document must contain:
 - 3.1 - Ingestion - Validation Rules (authority - ...)
 ```
 
-An inline reference cannot target a document the References section does not declare. When you lint the corpus, a reference to a document that exists but is not declared is an error.
+An inline reference cannot target a document the References section does not declare. A section reference such as `see 3.1#2` with `3.1` undeclared is always an error. A document reference such as `see 3.1` with `3.1` undeclared is an error when you lint a corpus in which document `3.1` exists.
 
-**Numbers in ordinary prose.** `see` and `per` are also ordinary English: `100 requests per 60 seconds`, `see 3 examples below`. The linter reads these as references to DocIDs `60` and `3` and warns that they are undeclared. Because no such documents exist, they stay warnings and never fail validation. You can leave them as they are, or rephrase (`100 requests every 60 seconds`) to silence them.
+**Numbers in ordinary prose.** `see` and `per` are also ordinary English: `100 requests per 60 seconds`, `see 3 examples below`. The linter reads these as references to DocIDs `60` and `3` and warns that they are undeclared. Because no such documents exist, they stay warnings and never fail validation. You can leave them as they are, or rephrase (`100 requests every 60 seconds`) to silence them. Section references are never mistaken for prose: nobody writes `per 60#2` in a sentence.
 
 ---
 

@@ -483,11 +483,15 @@ class CorpusValidator {
    * Raises a document-level undeclared-target warning to an error when the
    * target turns out to be a document in the corpus.
    *
-   * Per 1#9.5 rule 3: a single document cannot tell `per 3.1#2` (a reference
+   * Per 1#9.5 rule 3: a single document cannot tell `per 3.1` (a reference
    * whose declaration is missing) from `per 60 seconds` (prose), so ECR104
    * only warns. Here the corpus is known. If DocID `3.1` exists, the author
    * has referenced a real document without declaring it, which is an error.
    * If no document `60` exists, the warning stands on its own.
+   *
+   * An undeclared SectionID target (`per 3.1#2`) is already an ECR104 error,
+   * so only warnings are considered here; raising it again would report the
+   * same mistake twice.
    *
    * @param documents - The per-document entries, including their diagnostics.
    * @param docIdIndex - The global DocID-to-URI index.
@@ -504,6 +508,7 @@ class CorpusValidator {
 
         if (
           warning.ruleId !== INLINE_REFERENCE_RULE_ID ||
+          warning.severity !== 'warning' ||
           warning.data?.reason !== UNDECLARED_TARGET_REASON ||
           typeof targetDocId !== 'string' ||
           !docIdIndex.has(targetDocId)

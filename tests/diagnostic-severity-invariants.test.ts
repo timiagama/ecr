@@ -157,20 +157,32 @@ describe("Diagnostic severity and structural invariant violations", () => {
   });
 });
 
-describe("Undeclared inline targets: a warning in a document, an error only when the target exists", () => {
+describe("Undeclared inline targets: # is always strict; a bare number is strict only when the document exists", () => {
   const PROSE: string =
     "# 5.1 - Doc\n\n## 5.1#1 - Limits\n\nAt most 100 requests per 60 seconds; see 3 examples below.\n\n## References\n";
-  const UNDECLARED_REFERENCE: string =
+  const UNDECLARED_DOC_REFERENCE: string =
+    "# 5.1 - Doc\n\n## 5.1#1 - Section\n\nApplied per 3.1.\n\n## References\n";
+  const UNDECLARED_SECTION_REFERENCE: string =
     "# 5.1 - Doc\n\n## 5.1#1 - Section\n\nApplied per 3.1#1.\n\n## References\n";
 
-  it("a single document cannot tell prose from a reference, so it warns and still passes", () => {
-    const result = new Ecr().lintDocument("5.1.md", UNDECLARED_REFERENCE);
+  it("a bare number could be prose, so on its own a document only warns and still passes", () => {
+    const result = new Ecr().lintDocument("5.1.md", UNDECLARED_DOC_REFERENCE);
     const ecr104: readonly Diagnostic[] = result.diagnostics.filter((diagnostic) => diagnostic.ruleId === "ECR104");
 
     expect(ecr104).toHaveLength(1);
     expect(ecr104[0]!.severity).toBe("warning");
-    expect(ecr104[0]!.data).toMatchObject({ targetId: "3.1#1", targetDocId: "3.1" });
+    expect(ecr104[0]!.data).toMatchObject({ targetId: "3.1", targetDocId: "3.1" });
     expect(result.ok).toBe(true);
+  });
+
+  it("a # target is never prose, so an undeclared one is an error in the document itself", () => {
+    const result = new Ecr().lintDocument("5.1.md", UNDECLARED_SECTION_REFERENCE);
+    const ecr104: readonly Diagnostic[] = result.diagnostics.filter((diagnostic) => diagnostic.ruleId === "ECR104");
+
+    expect(ecr104).toHaveLength(1);
+    expect(ecr104[0]!.severity).toBe("error");
+    expect(ecr104[0]!.data).toMatchObject({ targetId: "3.1#1", targetDocId: "3.1" });
+    expect(result.ok).toBe(false);
   });
 
   it("numbers in ordinary prose that name no document stay warnings, so the corpus passes", () => {
@@ -188,8 +200,8 @@ describe("Undeclared inline targets: a warning in a document, an error only when
     expect(diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(false);
   });
 
-  it("an undeclared reference to a document that exists is a corpus error, located at the reference", () => {
-    const result: CorpusResult = validate({ "3.1.md": TARGET_DOCUMENT, "5.1.md": UNDECLARED_REFERENCE });
+  it("an undeclared bare-number reference to a document that exists is a corpus error, located at the reference", () => {
+    const result: CorpusResult = validate({ "3.1.md": TARGET_DOCUMENT, "5.1.md": UNDECLARED_DOC_REFERENCE });
     const errors: readonly Diagnostic[] = result.diagnostics.filter(
       (diagnostic) => diagnostic.ruleId === "corpus/undeclared-inline-target",
     );
@@ -198,6 +210,15 @@ describe("Undeclared inline targets: a warning in a document, an error only when
     expect(errors[0]!.severity).toBe("error");
     expect(errors[0]!.uri).toBe("5.1.md");
     expect(errors[0]!.range?.start.line).toBe(4);
-    expect(errors[0]!.data).toMatchObject({ targetId: "3.1#1", parentDocId: "3.1" });
+    expect(errors[0]!.data).toMatchObject({ targetId: "3.1", parentDocId: "3.1" });
+  });
+
+  it("an undeclared # reference is reported once, not again at corpus level", () => {
+    const result: CorpusResult = validate({ "3.1.md": TARGET_DOCUMENT, "5.1.md": UNDECLARED_SECTION_REFERENCE });
+    const errors: readonly Diagnostic[] = allDiagnostics(result).filter(
+      (diagnostic) => diagnostic.severity === "error" && diagnostic.uri === "5.1.md",
+    );
+
+    expect(errors.map((diagnostic) => diagnostic.ruleId)).toEqual(["ECR104"]);
   });
 });

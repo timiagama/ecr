@@ -25,10 +25,12 @@
  * For each valid inline reference, the rule checks that the TargetID's
  * parent DocID (or the TargetID itself, if it is a DocID) is declared
  * in the References section or is a self-reference to the document's
- * own DocID. An undeclared target produces a warning, not an error: on its
- * own a document cannot tell `per 3.1#2` (a reference someone forgot to
- * declare) from `per 60 seconds` (ordinary prose). The corpus validator,
- * which knows which documents exist, raises the former to an error.
+ * own DocID. An undeclared SectionID target (`per 3.1#2`) is an error: the
+ * `#` form never occurs in prose. An undeclared DocID target is only a
+ * warning, because on its own a document cannot tell `per 3.1` (a reference
+ * someone forgot to declare) from `per 60 seconds` (ordinary prose). The
+ * corpus validator, which knows which documents exist, raises the former to
+ * an error.
  *
  * Extracted artefacts:
  *   - {@link InlineReferenceEdge} for each valid inline reference whose
@@ -152,13 +154,23 @@ export interface InlineReferenceRuleOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * The severity used for all Inline Reference Rule diagnostics.
+ * The severity of Inline Reference Rule diagnostics about targets that may be
+ * ordinary prose.
  *
- * Per 1#9.5, an undeclared inline target is a warning at document level:
- * `see`/`per` followed by a number also occurs in ordinary prose. The corpus
- * validator reports an error when the target turns out to be a real document.
+ * Per 1#9.5, an undeclared DocID target (`per 60`, `see 8.1`) is a warning at
+ * document level: `see`/`per` followed by a number also occurs in ordinary
+ * prose. The corpus validator reports an error when the target turns out to be
+ * a real document. A wrapped reference is likewise a warning.
  */
 export const INLINE_REFERENCE_DIAGNOSTIC_SEVERITY: DiagnosticSeverity = 'warning';
+
+/**
+ * The severity of an undeclared SectionID target (`see 8.1#3`).
+ *
+ * The `#` form never occurs in prose, so such a target is certainly a
+ * reference, and an undeclared one is an error without consulting the corpus.
+ */
+export const UNDECLARED_SECTION_TARGET_SEVERITY: DiagnosticSeverity = 'error';
 
 /**
  * The `data.reason` carried by an undeclared-target diagnostic, which the
@@ -392,23 +404,34 @@ export class InlineReferenceRule {
       const targetIdDeclared: boolean = this.tellTargetIdDeclared(detectedReference.targetId);
 
       if (!targetIdDeclared) {
-        // Warn: this is either a reference someone forgot to declare, or a
-        // number in ordinary prose. The corpus validator tells them apart.
         const parentDocId: string = this.showTargetDocId(detectedReference.targetId);
-        const diagnostic: Diagnostic = this.createDiagnostic(
-          `"${detectedReference.kind} ${detectedReference.targetId}" reads as a reference to ` +
-          `DocID "${parentDocId}", which the References section does not declare. ` +
-          `If it is a reference, declare ${parentDocId} in References; ` +
-          `if it is ordinary prose, it can be left as it is.`,
-          textNodeData.range,
-          {
-            reason: UNDECLARED_TARGET_REASON,
-            targetId: detectedReference.targetId,
-            targetDocId: parentDocId,
-            fromId: sectionContext,
-            kind: detectedReference.kind,
-          },
-        );
+        const quoted: string = `"${detectedReference.kind} ${detectedReference.targetId}"`;
+        const data: Readonly<Record<string, unknown>> = {
+          reason: UNDECLARED_TARGET_REASON,
+          targetId: detectedReference.targetId,
+          targetDocId: parentDocId,
+          fromId: sectionContext,
+          kind: detectedReference.kind,
+        };
+
+        // A SectionID target is certainly a reference: nobody writes
+        // "per 60#2" in prose. A bare number may be prose, so it only warns,
+        // and the corpus validator raises it if the document exists.
+        const diagnostic: Diagnostic = detectedReference.targetId.includes('#')
+          ? this.createDiagnostic(
+              `${quoted} targets DocID "${parentDocId}", which the References section ` +
+              `does not declare. Declare ${parentDocId} in References.`,
+              textNodeData.range,
+              data,
+              UNDECLARED_SECTION_TARGET_SEVERITY,
+            )
+          : this.createDiagnostic(
+              `${quoted} reads as a reference to DocID "${parentDocId}", which the ` +
+              `References section does not declare. If it is a reference, declare ` +
+              `${parentDocId} in References; if it is ordinary prose, it can be left as it is.`,
+              textNodeData.range,
+              data,
+            );
         this.collectedDiagnostics.push(diagnostic);
         continue;
       }
@@ -584,22 +607,24 @@ export class InlineReferenceRule {
   /**
    * Creates a diagnostic object for the Inline Reference Rule.
    *
-   * All diagnostics share the same rule ID ({@link INLINE_REFERENCE_RULE_ID}),
-   * severity ({@link INLINE_REFERENCE_DIAGNOSTIC_SEVERITY}), and document URI.
+   * All diagnostics share the same rule ID ({@link INLINE_REFERENCE_RULE_ID})
+   * and document URI.
    *
    * @param message - Human-readable description of the issue
    * @param range - Optional positional range within the source document
    * @param data - Optional structured detail
+   * @param severity - Defaults to {@link INLINE_REFERENCE_DIAGNOSTIC_SEVERITY}
    * @returns A fully populated diagnostic object
    */
   private createDiagnostic(
     message: string,
     range?: PositionRange,
     data?: Readonly<Record<string, unknown>>,
+    severity: DiagnosticSeverity = INLINE_REFERENCE_DIAGNOSTIC_SEVERITY,
   ): Diagnostic {
     const diagnostic: Diagnostic = {
       ruleId: INLINE_REFERENCE_RULE_ID,
-      severity: INLINE_REFERENCE_DIAGNOSTIC_SEVERITY,
+      severity,
       message,
       uri: this.uri,
       ...(range !== undefined ? { range } : {}),

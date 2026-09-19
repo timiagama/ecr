@@ -574,11 +574,13 @@ Rules:
     
     - That DocID MUST appear in the References section, unless it is the current document’s own DocID.
         
-3. Inline references MUST NOT target an undeclared document. How a violation is reported depends on what the linter can know:
+3. Inline references MUST NOT target an undeclared document. No edge is extracted for an undeclared target. How the violation is reported depends on the form of the target, and on what the linter can know:
     
-    - Within a single document, an undeclared target is a WARNING. The words `see` and `per` followed by a number also occur in ordinary prose (`100 requests per 60 seconds`), and one document alone cannot tell such prose from a reference whose declaration is missing. No edge is extracted.
+    - A SectionID target (`see 3.1#2`) is an ERROR. The `#` form never occurs in ordinary prose, so the target is certainly a reference and its declaration is missing.
         
-    - Across a corpus, an undeclared target whose DocID is a document in the corpus is an ERROR: it is a real reference with a missing declaration. An undeclared target that names no document remains a WARNING.
+    - A DocID target (`see 3.1`, `per 60`) is a WARNING within a single document. The words `see` and `per` followed by a number also occur in ordinary prose (`100 requests per 60 seconds`), and one document alone cannot tell such prose from a reference whose declaration is missing.
+        
+    - Across a corpus, an undeclared DocID target that is a document in the corpus is an ERROR: it is a real reference whose declaration, and with it the direction and explanation of the edge, is missing. One that names no document remains a WARNING.
         
 4. The keyword and the `TargetID` MUST be adjacent plain text. Where inline formatting separates them — the `TargetID` begins a link, bold, italic or strikethrough span that directly follows the keyword, as in `see [8.1#3](…)` — the reference is invisible to a text search, so no edge is extracted and a WARNING is emitted.
     
@@ -1061,6 +1063,8 @@ Emit corpus-wide diagnostics. Corpus-wide failures are errors; a title mismatch 
     
 - malformed References entries
     
+- an inline reference to a SectionID (`X#Y`) whose DocID `X` is not declared in References
+    
 
 ### 1#12.2 - Referential Integrity Errors (Always ERROR)
 
@@ -1079,7 +1083,9 @@ Emit corpus-wide diagnostics. Corpus-wide failures are errors; a title mismatch 
 
 - a References entry whose title differs from its target's H1 title (WARNING)
     
-- an inline `see`/`per` target whose DocID is not declared, where no such document exists in the corpus or no corpus is available (WARNING)
+- an inline `see`/`per` DocID target (no `#`) that is not declared, where no such document exists in the corpus or no corpus is available (WARNING)
+    
+- an inline reference whose identifier is wrapped in a link or formatting (WARNING)
     
 - a References section with no entries (INFO)
     

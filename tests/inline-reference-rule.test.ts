@@ -253,7 +253,7 @@ describe('Feature: Invalid TargetID (non-numeric, malformed grammar)', () => {
 // Feature: Undeclared dependency (parent DocID not in References section)
 // ===========================================================================
 
-/** Tests that inline references to undeclared DocIDs produce warning diagnostics. */
+/** Tests that inline references to undeclared DocIDs produce diagnostics: an error for a SectionID target, which is never prose; a warning for a DocID target, which may be. */
 describe('Feature: Undeclared dependency (parent DocID not in References section)', () => {
   it('Scenario: Inline reference to SectionID whose parent DocID is not declared', () => {
     const result: InlineReferenceRuleResult = evaluateText(
@@ -264,7 +264,7 @@ describe('Feature: Undeclared dependency (parent DocID not in References section
 
     expect(result.inlineReferences).toHaveLength(0);
     expect(result.diagnostics).toHaveLength(1);
-    expect(result.diagnostics[0]!.severity).toBe('warning');
+    expect(result.diagnostics[0]!.severity).toBe('error');
     expect(result.diagnostics[0]!.ruleId).toBe(INLINE_REFERENCE_RULE_ID);
     expect(result.diagnostics[0]!.message).toContain('9.2');
   });
@@ -341,9 +341,9 @@ describe('Feature: Multiple inline references in one text node', () => {
     expect(result.inlineReferences[0]!.toId).toBe('3.1#2');
     expect(result.inlineReferences[0]!.kind).toBe('see');
 
-    // One warning diagnostic for undeclared reference on 9.2
+    // One error for the undeclared SectionID reference on 9.2
     expect(result.diagnostics).toHaveLength(1);
-    expect(result.diagnostics[0]!.severity).toBe('warning');
+    expect(result.diagnostics[0]!.severity).toBe('error');
     expect(result.diagnostics[0]!.ruleId).toBe(INLINE_REFERENCE_RULE_ID);
     expect(result.diagnostics[0]!.message).toContain('9.2');
   });
@@ -454,18 +454,17 @@ describe('Feature: Edge cases -- keyword boundaries and case sensitivity', () =>
 // ===========================================================================
 
 describe('Cross-cutting: Diagnostic metadata', () => {
-  it('all diagnostics carry ruleId = INLINE_REFERENCE_RULE_ID and severity = "warning"', () => {
-    // Use an undeclared reference to produce at least one diagnostic
+  it('all diagnostics carry ruleId = INLINE_REFERENCE_RULE_ID; an undeclared SectionID is an error, a DocID a warning', () => {
+    // Use undeclared references to produce at least one diagnostic of each kind
     const result: InlineReferenceRuleResult = evaluateText(
       'see 9.2#1 and per 7.3',
       '5.1#1',
       { declaredDocIds: new Set<DocID>([]) },
     );
 
-    expect(result.diagnostics.length).toBeGreaterThanOrEqual(1);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.severity)).toEqual(['error', 'warning']);
     for (const diagnostic of result.diagnostics) {
       expect(diagnostic.ruleId).toBe(INLINE_REFERENCE_RULE_ID);
-      expect(diagnostic.severity).toBe('warning');
       expect(diagnostic.uri).toBe('file:///test.md');
     }
   });
