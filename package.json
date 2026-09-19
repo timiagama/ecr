@@ -1,0 +1,67 @@
+{
+  "name": "@timiagama/ecr",
+  "version": "0.1.0",
+  "description": "Explicit Constraint Referencing (ECR): a Markdown convention that helps reduce coding-agent errors by turning cross-references in architecture docs into a graph that agents can navigate with grep. Agents gain IDE-like \"Go to Definition\" and \"Find all references\" across large document corpora, reducing missed constraints and context-window bloat.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "ecr": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "spec",
+    "protocol",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "markdown",
+    "documentation",
+    "architecture",
+    "coding-agent",
+    "ai-agent",
+    "llm",
+    "context-engineering",
+    "constraint",
+    "linter",
+    "ecr"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/timiagama/ecr.git"
+  },
+  "homepage": "https://github.com/timiagama/ecr#readme",
+  "bugs": {
+    "url": "https://github.com/timiagama/ecr/issues"
+  },
+  "author": "Timi Agama",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "npm run clean && tsc",
+    "test": "vitest run",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepublishOnly": "npm run build && npm test && npm run lint"
+  },
+  "dependencies": {
+    "mdast-util-to-string": "^4.0.0",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.39.2",
+    "eslint-plugin-jsdoc": "^62.5.5",
+    "eslint-plugin-tsdoc": "^0.5.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.55.0",
+    "vitest": "^4.0.18"
+  }
+}

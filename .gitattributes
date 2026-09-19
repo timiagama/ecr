@@ -1,0 +1,4 @@
+# Store every text file with LF line endings, whatever the platform.
+# Without this, core.autocrlf decides per machine, and a CRLF shebang
+# breaks the ecr binary on macOS and Linux.
+* text=auto eol=lf
