@@ -720,7 +720,7 @@ describe('Feature: Extracted document is present when DocID is recoverable despi
       '',
       '## 3.1#1 - Overview',
       '',
-      'Referencing an undeclared document see 99.1#2.',
+      '## 3.1.2 - Dotted Heading Without The Separator',
       '',
       '## References',
       '',
@@ -733,10 +733,10 @@ describe('Feature: Extracted document is present when DocID is recoverable despi
 
     expect(result.ok).toBe(false);
 
-    const ecr104Diagnostics: readonly Diagnostic[] = result.diagnostics.filter(
-      (diagnostic: Diagnostic) => diagnostic.ruleId === 'ECR104',
+    const ecr102Errors: readonly Diagnostic[] = result.diagnostics.filter(
+      (diagnostic: Diagnostic) => diagnostic.ruleId === 'ECR102' && diagnostic.severity === 'error',
     );
-    expect(ecr104Diagnostics.length).toBeGreaterThanOrEqual(1);
+    expect(ecr102Errors.length).toBeGreaterThanOrEqual(1);
 
     // Extracted is present because a valid DocID was recovered
     expect(result.extracted).toBeDefined();

@@ -25,7 +25,10 @@
  * For each valid inline reference, the rule checks that the TargetID's
  * parent DocID (or the TargetID itself, if it is a DocID) is declared
  * in the References section or is a self-reference to the document's
- * own DocID. Undeclared dependencies produce an error diagnostic.
+ * own DocID. An undeclared target produces a warning, not an error: on its
+ * own a document cannot tell `per 3.1#2` (a reference someone forgot to
+ * declare) from `per 60 seconds` (ordinary prose). The corpus validator,
+ * which knows which documents exist, raises the former to an error.
  *
  * Extracted artefacts:
  *   - {@link InlineReferenceEdge} for each valid inline reference whose
@@ -151,10 +154,17 @@ export interface InlineReferenceRuleOptions {
 /**
  * The severity used for all Inline Reference Rule diagnostics.
  *
- * Per 1#9.5 and 1#9.8, inline references that introduce undeclared
- * document dependencies are structural violations and are reported as errors.
+ * Per 1#9.5, an undeclared inline target is a warning at document level:
+ * `see`/`per` followed by a number also occurs in ordinary prose. The corpus
+ * validator reports an error when the target turns out to be a real document.
  */
-export const INLINE_REFERENCE_DIAGNOSTIC_SEVERITY: DiagnosticSeverity = 'error';
+export const INLINE_REFERENCE_DIAGNOSTIC_SEVERITY: DiagnosticSeverity = 'warning';
+
+/**
+ * The `data.reason` carried by an undeclared-target diagnostic, which the
+ * corpus validator uses to find the warnings it must check against the index.
+ */
+export const UNDECLARED_TARGET_REASON: string = 'undeclared-target';
 
 // ---------------------------------------------------------------------------
 // Internal match type
@@ -230,7 +240,7 @@ const INLINE_REFERENCE_PATTERN: RegExp = /(?:^|[\s(])([Ss]ee|[Pp]er)\s+(\d+(?:\.
  * `fromId` set to the section context passed per call and `kind` normalised
  * to lowercase.
  *
- * For undeclared references, the rule emits an error diagnostic and does
+ * For undeclared references, the rule emits a warning diagnostic and does
  * not extract an edge.
  *
  * Usage:
@@ -310,7 +320,7 @@ export class InlineReferenceRule {
    *    or is a self-reference to the document's own DocID
    * 4. If declared or self-referencing, extracts an {@link InlineReferenceEdge}
    *    with `fromId` set to the provided `sectionContext`
-   * 5. If undeclared, emits an error diagnostic and does not extract an edge
+   * 5. If undeclared, emits a warning diagnostic and does not extract an edge
    *
    * Multiple inline references within a single text node are all independently
    * detected and validated. Duplicate references are not deduplicated (that is
@@ -346,13 +356,22 @@ export class InlineReferenceRule {
       const targetIdDeclared: boolean = this.tellTargetIdDeclared(detectedReference.targetId);
 
       if (!targetIdDeclared) {
-        // Emit an error diagnostic for the undeclared reference
+        // Warn: this is either a reference someone forgot to declare, or a
+        // number in ordinary prose. The corpus validator tells them apart.
         const parentDocId: string = this.showTargetDocId(detectedReference.targetId);
         const diagnostic: Diagnostic = this.createDiagnostic(
-          `Inline reference "${detectedReference.kind} ${detectedReference.targetId}" ` +
-          `targets undeclared DocID "${parentDocId}". ` +
-          `Declare it in the References section.`,
+          `"${detectedReference.kind} ${detectedReference.targetId}" reads as a reference to ` +
+          `DocID "${parentDocId}", which the References section does not declare. ` +
+          `If it is a reference, declare ${parentDocId} in References; ` +
+          `if it is ordinary prose, it can be left as it is.`,
           textNodeData.range,
+          {
+            reason: UNDECLARED_TARGET_REASON,
+            targetId: detectedReference.targetId,
+            targetDocId: parentDocId,
+            fromId: sectionContext,
+            kind: detectedReference.kind,
+          },
         );
         this.collectedDiagnostics.push(diagnostic);
         continue;
@@ -487,19 +506,25 @@ export class InlineReferenceRule {
    * Creates a diagnostic object for the Inline Reference Rule.
    *
    * All diagnostics share the same rule ID ({@link INLINE_REFERENCE_RULE_ID}),
-   * severity (error), and document URI.
+   * severity ({@link INLINE_REFERENCE_DIAGNOSTIC_SEVERITY}), and document URI.
    *
    * @param message - Human-readable description of the issue
    * @param range - Optional positional range within the source document
+   * @param data - Optional structured detail
    * @returns A fully populated diagnostic object
    */
-  private createDiagnostic(message: string, range?: PositionRange): Diagnostic {
+  private createDiagnostic(
+    message: string,
+    range?: PositionRange,
+    data?: Readonly<Record<string, unknown>>,
+  ): Diagnostic {
     const diagnostic: Diagnostic = {
       ruleId: INLINE_REFERENCE_RULE_ID,
       severity: INLINE_REFERENCE_DIAGNOSTIC_SEVERITY,
       message,
       uri: this.uri,
       ...(range !== undefined ? { range } : {}),
+      ...(data !== undefined ? { data } : {}),
     };
 
     return diagnostic;

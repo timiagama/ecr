@@ -7,6 +7,7 @@ import type {
   ExtractedDocument,
   SectionID,
 } from './types.js';
+import { INLINE_REFERENCE_RULE_ID, UNDECLARED_TARGET_REASON } from './inline-reference-rule.js';
 
 // ---------------------------------------------------------------------------
 // Internal helper types
@@ -57,8 +58,9 @@ class CorpusValidator {
    * successfully extracted artefact are excluded from corpus-wide
    * indexing and cross-reference resolution.
    *
-   * All corpus-wide violations are reported as diagnostics with
-   * severity `'error'` (per 1#9.9, 1#12.2).
+   * Corpus-wide violations are reported as diagnostics with severity
+   * `'error'` (per 1#9.9, 1#12.2), except a stale References title, which
+   * is a `'warning'` (1#9.9 rule 5).
    *
    * @param documents - The per-document entries to validate as a corpus.
    * @returns A {@link CorpusResult} containing per-document results,
@@ -103,6 +105,9 @@ class CorpusValidator {
       docIdIndex,
       accumulator,
     );
+
+    // Step 6b: An undeclared inline target that names a real document is an error
+    this.escalateUndeclaredInlineTargets(documents, docIdIndex, accumulator);
 
     if (hasDuplicateIdentifiers) {
       return {
@@ -402,18 +407,18 @@ class CorpusValidator {
   }
 
   /**
-   * Validates that for each inline reference whose target is a SectionID,
-   * the parent DocID of that SectionID is declared in the referring
+   * Validates that for each extracted inline reference whose target is a
+   * SectionID, the DocID of that SectionID is declared in the referring
    * document's References section.
    *
-   * Per 1#9.5 rule 2 and 1#11.2 step 6: if an inline reference
-   * targets `X.Y.Z`, the parent DocID `X` MUST appear in the References
-   * section of the referring document.
+   * Per 1#9.5 rule 2 and 1#11.2 step 6: if an inline reference targets
+   * `X#Y`, the DocID `X` MUST appear in the References section of the
+   * referring document.
    *
-   * This check uses the global DocID index to identify the longest matching
-   * DocID prefix of the target, determining its parent DocID. If the target
-   * resolves to a DocID directly, no parent-declaration check is performed
-   * (the reference itself IS the document-level dependency).
+   * The linter itself never extracts an undeclared edge, so through the
+   * {@link Ecr} facade this cannot fire; undeclared targets are handled by
+   * {@link CorpusValidator.escalateUndeclaredInlineTargets}. It guards hosts
+   * that assemble extracted documents themselves.
    *
    * @param indexableDocuments - Documents with successfully extracted artefacts.
    * @param docIdIndex - The global DocID-to-URI index.
@@ -470,6 +475,60 @@ class CorpusValidator {
             },
           });
         }
+      }
+    }
+  }
+
+  /**
+   * Raises a document-level undeclared-target warning to an error when the
+   * target turns out to be a document in the corpus.
+   *
+   * Per 1#9.5 rule 3: a single document cannot tell `per 3.1#2` (a reference
+   * whose declaration is missing) from `per 60 seconds` (prose), so ECR104
+   * only warns. Here the corpus is known. If DocID `3.1` exists, the author
+   * has referenced a real document without declaring it, which is an error.
+   * If no document `60` exists, the warning stands on its own.
+   *
+   * @param documents - The per-document entries, including their diagnostics.
+   * @param docIdIndex - The global DocID-to-URI index.
+   * @param accumulator - Diagnostic accumulator for recording violations.
+   */
+  private escalateUndeclaredInlineTargets(
+    documents: readonly CorpusDocumentEntry[],
+    docIdIndex: ReadonlyMap<DocID, string>,
+    accumulator: DiagnosticAccumulator,
+  ): void {
+    for (const entry of documents) {
+      for (const warning of entry.result.diagnostics) {
+        const targetDocId: unknown = warning.data?.targetDocId;
+
+        if (
+          warning.ruleId !== INLINE_REFERENCE_RULE_ID ||
+          warning.data?.reason !== UNDECLARED_TARGET_REASON ||
+          typeof targetDocId !== 'string' ||
+          !docIdIndex.has(targetDocId)
+        ) {
+          continue;
+        }
+
+        const targetId: unknown = warning.data.targetId;
+
+        accumulator.items.push({
+          severity: 'error',
+          ruleId: 'corpus/undeclared-inline-target',
+          message:
+            `Inline reference to '${String(targetId)}' targets DocID '${targetDocId}', ` +
+            `which exists in the corpus but is not declared — declare it in the References section`,
+          uri: entry.uri,
+          ...(warning.range !== undefined ? { range: warning.range } : {}),
+          ...(entry.result.extracted !== undefined ? { docId: entry.result.extracted.docId } : {}),
+          data: {
+            targetId,
+            parentDocId: targetDocId,
+            fromId: warning.data.fromId,
+            kind: warning.data.kind,
+          },
+        });
       }
     }
   }

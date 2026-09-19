@@ -71,11 +71,6 @@ describe("Diagnostic severity and structural invariant violations", () => {
       ruleId: "ECR103",
       text: "# 5.1 - Doc\n\n## References\n\n- 3.1 - Validation Rules (sometimes - bad direction)\n",
     },
-    {
-      violation: "inline reference to an undeclared document",
-      ruleId: "ECR104",
-      text: "# 5.1 - Doc\n\n## 5.1#1 - Section\n\nApplied per 3.1#1.\n\n## References\n",
-    },
   ])("SCN-047: $violation is reported as an error", ({ ruleId, text }) => {
     const result: CorpusResult = validate({ "3.1.md": TARGET_DOCUMENT, "5.1.md": text });
     // Only the document under test: the conforming target's empty References
@@ -159,5 +154,50 @@ describe("Diagnostic severity and structural invariant violations", () => {
     });
 
     expect(result.diagnostics).toEqual([]);
+  });
+});
+
+describe("Undeclared inline targets: a warning in a document, an error only when the target exists", () => {
+  const PROSE: string =
+    "# 5.1 - Doc\n\n## 5.1#1 - Limits\n\nAt most 100 requests per 60 seconds; see 3 examples below.\n\n## References\n";
+  const UNDECLARED_REFERENCE: string =
+    "# 5.1 - Doc\n\n## 5.1#1 - Section\n\nApplied per 3.1#1.\n\n## References\n";
+
+  it("a single document cannot tell prose from a reference, so it warns and still passes", () => {
+    const result = new Ecr().lintDocument("5.1.md", UNDECLARED_REFERENCE);
+    const ecr104: readonly Diagnostic[] = result.diagnostics.filter((diagnostic) => diagnostic.ruleId === "ECR104");
+
+    expect(ecr104).toHaveLength(1);
+    expect(ecr104[0]!.severity).toBe("warning");
+    expect(ecr104[0]!.data).toMatchObject({ targetId: "3.1#1", targetDocId: "3.1" });
+    expect(result.ok).toBe(true);
+  });
+
+  it("numbers in ordinary prose that name no document stay warnings, so the corpus passes", () => {
+    const result: CorpusResult = validate({ "5.1.md": PROSE });
+    const diagnostics: readonly Diagnostic[] = allDiagnostics(result);
+
+    expect(
+      diagnostics
+        .filter((diagnostic) => diagnostic.ruleId === "ECR104")
+        .map((diagnostic) => [diagnostic.data?.["targetId"], diagnostic.severity]),
+    ).toEqual([
+      ["60", "warning"],
+      ["3", "warning"],
+    ]);
+    expect(diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(false);
+  });
+
+  it("an undeclared reference to a document that exists is a corpus error, located at the reference", () => {
+    const result: CorpusResult = validate({ "3.1.md": TARGET_DOCUMENT, "5.1.md": UNDECLARED_REFERENCE });
+    const errors: readonly Diagnostic[] = result.diagnostics.filter(
+      (diagnostic) => diagnostic.ruleId === "corpus/undeclared-inline-target",
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.severity).toBe("error");
+    expect(errors[0]!.uri).toBe("5.1.md");
+    expect(errors[0]!.range?.start.line).toBe(4);
+    expect(errors[0]!.data).toMatchObject({ targetId: "3.1#1", parentDocId: "3.1" });
   });
 });

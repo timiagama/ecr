@@ -572,8 +572,12 @@ Rules:
     
     - That DocID MUST appear in the References section, unless it is the current document’s own DocID.
         
-3. Inline references MUST NOT target an undeclared document.
+3. Inline references MUST NOT target an undeclared document. How a violation is reported depends on what the linter can know:
     
+    - Within a single document, an undeclared target is a WARNING. The words `see` and `per` followed by a number also occur in ordinary prose (`100 requests per 60 seconds`), and one document alone cannot tell such prose from a reference whose declaration is missing. No edge is extracted.
+        
+    - Across a corpus, an undeclared target whose DocID is a document in the corpus is an ERROR: it is a real reference with a missing declaration. An undeclared target that names no document remains a WARNING.
+        
 
 ---
 
@@ -943,7 +947,7 @@ Constraints:
     
 - Inline references MUST NOT target an undeclared document:
     
-    - if `toId` is `X` or `X#Y`, then `X` MUST appear in the References section of the current document, unless `X` is the current document’s own DocID
+    - if `toId` is `X` or `X#Y`, then `X` MUST appear in the References section of the current document, unless `X` is the current document’s own DocID; an undeclared target yields no edge, and is reported as described in 1#9.5 rule 3
         
 - Every `toId` MUST resolve to an existing identifier in the corpus (DocID or SectionID).
 	
@@ -1034,7 +1038,7 @@ Given the set of extracted documents:
     
 5. Resolve all `InlineReferenceEdge.toId` targets against the union of DocID and SectionID indexes.
     
-6. Validate that each inline reference’s parent DocID is declared in References.
+6. Validate that each inline reference’s parent DocID is declared in References. For each undeclared target reported in Pass 1, emit an error if its DocID is in the DocID index (1#9.5 rule 3).
     
 
 Emit corpus-wide diagnostics. Corpus-wide failures are errors; a title mismatch found in step 4 is a warning.
@@ -1053,8 +1057,6 @@ Emit corpus-wide diagnostics. Corpus-wide failures are errors; a title mismatch 
     
 - malformed References entries
     
-- inline reference whose parent DocID is not declared in References
-    
 
 ### 1#12.2 - Referential Integrity Errors (Always ERROR)
 
@@ -1066,10 +1068,14 @@ Emit corpus-wide diagnostics. Corpus-wide failures are errors; a title mismatch 
     
 - unresolved inline targets
     
+- an inline reference to a document in the corpus that the References section does not declare
+    
 
 ### 1#12.3 - Advisory Findings (WARNING or INFO)
 
 - a References entry whose title differs from its target's H1 title (WARNING)
+    
+- an inline `see`/`per` target whose DocID is not declared, where no such document exists in the corpus or no corpus is available (WARNING)
     
 - a References section with no entries (INFO)
     
