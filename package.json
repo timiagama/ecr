@@ -46,8 +46,8 @@
   "scripts": {
     "build": "npm run clean && tsc",
     "test": "vitest run",
-    "lint": "eslint src/",
-    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ tests/",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.eslint.json",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "prepublishOnly": "npm run build && npm test && npm run lint"
   },

@@ -197,11 +197,13 @@ describe('Feature: lint', () => {
     );
 
     const outcome: CommandOutcome = cli.run(['lint', corpus, '--format', 'json']);
-    const parsed: unknown = JSON.parse(outcome.output);
+    const report = JSON.parse(outcome.output) as {
+      readonly totals: { readonly errors: unknown };
+      readonly diagnostics: readonly { readonly line?: number }[];
+    };
 
-    expect(parsed).toMatchObject({ totals: { errors: expect.any(Number) } });
+    expect(typeof report.totals.errors).toBe('number');
 
-    const report = parsed as { readonly diagnostics: readonly { readonly line?: number }[] };
     const positioned = report.diagnostics.filter((d) => d.line !== undefined);
 
     expect(positioned.length).toBeGreaterThan(0);
