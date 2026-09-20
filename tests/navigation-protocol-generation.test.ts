@@ -22,7 +22,12 @@ import { fileURLToPath } from 'node:url';
 const TEST_DIRECTORY: string = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT: string = join(TEST_DIRECTORY, '..');
 const GENERATOR: string = join(REPOSITORY_ROOT, 'scripts', 'generate-navigation-protocol.mjs');
-const AUTHORED: string = join(REPOSITORY_ROOT, 'docs', 'engineering', 'navigation-protocol.md');
+const AUTHORED: string = join(
+  REPOSITORY_ROOT,
+  'docs',
+  'engineering',
+  '0.3 - ECR Navigation Protocol for Coding Agents.md',
+);
 const SHIPPED: string = join(REPOSITORY_ROOT, 'protocol', 'navigation-protocol.md');
 
 /**

@@ -190,10 +190,24 @@ Development is pinned to Node 22 (`.nvmrc`); `engines` is deliberately open at
 `~6.0.3`: typescript-eslint supports `<6.1.0`, and npm's `latest` is TypeScript
 7. Do not upgrade either without being asked.
 
+### Naming documents in the engineering corpus
+
+A document in `docs/engineering/` is named `<DocID> - <Title>.md`, with the
+title matching its H1 — the convention the example corpus in `examples/docs/`
+teaches. ECR does not require it; the linter treats the URI as opaque and takes
+identity from the H1. It is a convention so that a corpus is navigable by
+listing a directory rather than by grepping every file.
+
+Do not give a corpus document a basename that appears in
+`DEFAULT_META_DOCUMENT_NAMES`. Such a file is excluded from validation by name,
+so its DocID is never indexed and every address into it silently stops
+resolving. The DocID prefix makes this collision impossible.
+
 ### The shipped navigation protocol is generated
 
 `protocol/navigation-protocol.md` is a build artifact. Edit
-`docs/engineering/navigation-protocol.md` and run `npm run generate:protocol`;
+`docs/engineering/0.3 - ECR Navigation Protocol for Coding Agents.md` and run
+`npm run generate:protocol`;
 the build does this too. The shipped copy has this repository's ECR identity
 removed, because `ecr init` writes it verbatim into a user's corpus where a
 DocID of ours would mean nothing.

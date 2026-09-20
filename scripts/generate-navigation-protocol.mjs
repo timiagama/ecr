@@ -25,7 +25,8 @@ const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Without arguments the script regenerates the real artifact.
 const [sourceArgument, outputArgument] = process.argv.slice(2);
 const sourcePath =
-  sourceArgument ?? join(repositoryRoot, 'docs', 'engineering', 'navigation-protocol.md');
+  sourceArgument ??
+  join(repositoryRoot, 'docs', 'engineering', '0.3 - ECR Navigation Protocol for Coding Agents.md');
 const outputPath =
   outputArgument ?? join(repositoryRoot, 'protocol', 'navigation-protocol.md');
 
