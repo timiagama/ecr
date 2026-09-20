@@ -2,11 +2,13 @@
 
 ## 1. Purpose
 
-This contract governs how a coding agent should work in this repository.
+This contract governs how a coding agent should work when modifying a TypeScript repository.
 
-The **TypeScript Engineering Standard** defines the expected properties of the code. This contract defines the agent's operating discipline while changing it.
+The **TypeScript Engineering Standard** defines the expected properties of the code.
 
-The agent is expected to exercise engineering judgment. Do not substitute mechanical rule-following for understanding the task, repository, and surrounding code.
+This contract defines the agent's operating discipline while changing it.
+
+Exercise engineering judgment. Do not substitute mechanical rule-following for understanding the task, repository, and surrounding code.
 
 ---
 
@@ -14,21 +16,23 @@ The agent is expected to exercise engineering judgment. Do not substitute mechan
 
 Before modifying code:
 
-* understand the requested behaviour and relevant constraints;
-* inspect the affected code and its immediate dependencies;
-* identify the repository's established architecture and conventions where relevant;
-* inspect existing tests for the behaviour being changed; and
-* identify applicable repository instructions and engineering standards.
+- understand the requested behaviour and relevant constraints;
+- inspect the affected code and its relevant dependencies;
+- identify established architecture and repository conventions where relevant;
+- inspect existing tests for the behaviour being changed; and
+- identify applicable repository instructions and engineering standards.
 
 Read enough context to understand the change properly, but do not explore unrelated areas without a task-derived reason.
 
-Do not assume that a familiar problem should be solved using a familiar pattern before understanding how this repository already approaches it.
+Do not assume that a familiar problem should be solved using a familiar pattern before understanding how the repository already approaches it.
+
+Prefer explicit repository requirements over conventions inferred solely from repeated existing code. Existing code may contain legacy patterns that are no longer authoritative.
 
 ---
 
 ## 3. Preserve Existing Intent
 
-Treat established architecture, domain concepts, public contracts, tests, and documented invariants as constraints unless the task requires them to change.
+Treat established architecture, domain concepts, public contracts, tests, documented invariants, and explicit repository decisions as constraints unless the task requires them to change.
 
 Prefer extending the existing design coherently over introducing a competing approach.
 
@@ -46,16 +50,20 @@ Avoid unrelated work.
 
 Do not, without a task-derived reason:
 
-* refactor unrelated code;
-* rename unrelated concepts;
-* broaden public APIs;
-* change configuration;
-* introduce dependencies;
-* replace established patterns;
-* reformat unrelated files; or
-* clean up surrounding code merely because it could be improved.
+- refactor unrelated code;
+- rename unrelated concepts;
+- broaden public APIs;
+- change configuration;
+- introduce dependencies;
+- introduce or replace architectural patterns;
+- reformat unrelated code; or
+- normalize surrounding code merely because it could be improved.
 
-"Smallest" does not mean minimizing lines changed. Make whatever coherent structural change is necessary for a correct and maintainable solution.
+"Smallest" does not mean minimizing lines changed.
+
+Make whatever coherent structural change is necessary for a correct and maintainable solution.
+
+When the requested change exposes a nearby structural problem that must be addressed for a correct solution, fix the relevant structure rather than layering a workaround on top of it.
 
 ---
 
@@ -63,14 +71,14 @@ Do not, without a task-derived reason:
 
 Before implementing general-purpose functionality, determine whether the required capability is already provided by:
 
-1. the platform;
+1. the language or runtime platform;
 2. the repository;
 3. an existing dependency; or
 4. a mature, well-maintained package.
 
 Do not create bespoke commodity infrastructure merely because it is easy to generate.
 
-Use engineering judgment when deciding whether adopting a dependency is preferable to a local implementation.
+Use the TypeScript Engineering Standard and repository-specific constraints when deciding whether an additional dependency is preferable to a local implementation.
 
 ---
 
@@ -80,46 +88,47 @@ Resolve failures at their cause.
 
 Do not make a change appear successful by:
 
-* weakening types;
-* suppressing compiler or lint errors;
-* deleting or weakening valid tests;
-* reducing meaningful test coverage;
-* bypassing validation;
-* swallowing errors;
-* disabling quality gates; or
-* changing expected behaviour merely to match an incorrect implementation.
+- weakening types;
+- using unjustified type-system escape hatches;
+- suppressing compiler or lint failures;
+- deleting, weakening, bypassing, or rewriting valid tests merely to make an implementation pass;
+- reducing meaningful behavioural protection;
+- bypassing runtime validation;
+- swallowing errors;
+- disabling or weakening quality gates; or
+- changing expected behaviour merely to match an incorrect implementation.
 
-If an existing test, type, or rule is genuinely wrong and must change to satisfy the task, change it deliberately and consistently with the engineering standard.
+If an existing test, type, rule, or expectation is genuinely wrong and must change to satisfy the task, change it deliberately and consistently with the engineering standard and repository requirements.
 
 ---
 
 ## 7. Verify the Change
 
-Before considering the task complete:
+Before considering a task complete:
 
-* inspect the final diff;
-* confirm the implementation satisfies the requested behaviour;
-* check for unintended changes;
-* run the applicable repository quality gates; and
-* resolve any resulting failures.
+1. inspect the resulting implementation as a whole;
+2. confirm that it satisfies the requested behaviour;
+3. confirm that relevant invariants remain intact;
+4. inspect the final diff for unintended changes;
+5. run all applicable repository-defined quality gates; and
+6. resolve failures at their cause rather than suppressing them.
 
-Verification should cover the behaviour changed, not merely compilation.
+Verification must cover the behaviour changed, not merely successful compilation.
 
-Where the repository provides authoritative commands, use them rather than inventing alternative verification procedures.
+Use the repository's authoritative verification procedures rather than inventing alternatives.
+
+Do not claim that a check passed unless it was actually run successfully.
 
 ---
 
-## 8. Completion
+## 8. Completion Report
 
-A change is complete only when it is:
+Keep the completion report concise and factual.
 
-* correct;
-* appropriately tested;
-* consistent with the repository;
-* compliant with the TypeScript Engineering Standard;
-* free of unintended changes; and
-* mechanically verified using the repository's applicable quality gates.
+State:
 
-Report material limitations, unresolved failures, or assumptions that affect correctness.
+- what materially changed;
+- what verification was performed; and
+- any unresolved issue, limitation, or assumption that materially affects correctness.
 
-Do not claim successful verification that was not actually performed.
+Do not claim successful completion when required verification failed or could not be performed.

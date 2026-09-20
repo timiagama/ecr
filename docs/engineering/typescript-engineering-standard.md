@@ -2,9 +2,9 @@
 
 ## 1. Purpose
 
-This standard defines the engineering properties expected of TypeScript code in this repository.
+This standard defines the engineering properties expected of TypeScript code.
 
-It is designed for capable engineers and frontier coding models. It establishes required invariants, project-wide engineering principles, and defaults without attempting to prescribe routine implementation decisions that are better resolved from context.
+It is designed for capable engineers and frontier coding models. It establishes required invariants, engineering principles, and defaults without prescribing routine implementation decisions that are better resolved from context.
 
 ### 1.1 Exercise Engineering Judgment
 
@@ -12,21 +12,21 @@ This standard is not a substitute for engineering judgment.
 
 Where no explicit constraint applies, choose the solution that best fits:
 
-* the existing codebase;
-* the domain;
-* the task;
-* established TypeScript and Node.js practice; and
-* the simplest design that remains robust and maintainable.
+- the existing codebase;
+- the domain;
+- the task;
+- established TypeScript and Node.js practice; and
+- the simplest design that remains robust and maintainable.
 
 Do not mechanically apply a guideline when doing so would make the code less clear, less correct, or less maintainable.
 
-### 1.2 Repository Conventions Take Precedence
+### 1.2 Repository-Specific Requirements
 
-Follow the repository's established architecture, package manager, compiler configuration, linting configuration, formatting rules, test framework, and local conventions.
+Follow explicit repository architecture, conventions, configuration, and local engineering requirements.
 
-Do not introduce a competing convention merely because another approach would also be reasonable.
+Repository-specific requirements may specialize the defaults in this standard. They do not implicitly override its non-negotiable invariants unless an explicit project requirement documents the exception.
 
-Where this standard and an explicit repository rule conflict, the more specific repository rule takes precedence unless doing so would violate a non-negotiable invariant in this standard.
+A repeated pattern in existing code is not necessarily an intentional current convention. Prefer documented or mechanically enforced repository requirements when they conflict with incidental or legacy patterns.
 
 ---
 
@@ -34,18 +34,20 @@ Where this standard and an explicit repository rule conflict, the more specific 
 
 Code should optimize for:
 
-* correctness;
-* readability;
-* maintainability;
-* clear separation of concerns;
-* small and deliberate public interfaces;
-* explicit domain concepts and invariants;
-* robustness at system boundaries; and
-* minimal accidental complexity.
+- correctness;
+- readability;
+- maintainability;
+- clear separation of concerns;
+- small and deliberate public interfaces;
+- explicit domain concepts and invariants;
+- robustness at system boundaries; and
+- minimal accidental complexity.
 
 Prefer deep modules: hide implementation complexity behind interfaces that are simpler than the implementation they encapsulate.
 
 Prefer code whose intent can be understood from its structure, types, and names rather than from explanatory commentary.
+
+Correct compilation and passing tests are necessary but not sufficient. Completed code must also fit the relevant architecture, preserve its invariants, and remain understandable and maintainable.
 
 ---
 
@@ -55,16 +57,18 @@ Prefer code whose intent can be understood from its structure, types, and names 
 
 Do not resolve a type error by weakening the type system unless the domain genuinely requires a less constrained type.
 
-Do not introduce any of the following merely to satisfy the compiler:
+Do not use type-system escape hatches to avoid modelling or fixing a type problem.
 
-* `any`;
-* unjustified type assertions;
-* non-null assertions;
-* `@ts-ignore`;
-* `@ts-expect-error`; or
-* unnecessarily broad types.
+Where an unavoidable untyped or incorrectly typed boundary requires an escape hatch:
 
-When such mechanisms are genuinely necessary, the reason must be clear from the surrounding code or documentation.
+- contain it at that boundary;
+- make the reason explicit;
+- keep the unsafe surface as small as practical; and
+- prefer mechanisms that fail when the exception is no longer required.
+
+Prefer `unknown` and runtime narrowing over `any`.
+
+Do not introduce unjustified assertions, non-null assertions, suppression directives, or unnecessarily broad types merely to satisfy the compiler.
 
 ### 3.2 Validate Runtime Boundaries
 
@@ -74,50 +78,36 @@ Validate and parse data when it crosses from an untrusted or independently evolv
 
 Examples include:
 
-* HTTP input;
-* external API responses;
-* deserialized JSON;
-* files;
-* environment variables;
-* message queues;
-* user-controlled input; and
-* other systems whose runtime contract cannot be guaranteed by the local compiler.
+- HTTP input;
+- external API responses;
+- deserialized data;
+- files;
+- environment variables;
+- message queues;
+- user-controlled input; and
+- other systems whose runtime contract cannot be guaranteed by the local compiler.
 
 Do not repeatedly revalidate data after it has entered a trusted, typed boundary unless the architecture requires it.
 
 ### 3.3 Do Not Hide Failures
 
-Do not silently swallow errors.
+Failures must remain visible to an appropriate owner.
+
+Do not silently swallow errors or convert failures into apparently successful outcomes merely to simplify control flow.
 
 Preserve enough information for failures to be diagnosed, including the original cause where appropriate.
 
-Do not convert failures into apparently successful outcomes merely to simplify control flow.
+### 3.4 Preserve Behavioural Protection
 
-### 3.4 Protect Behaviour with Tests
+A change must not reduce the test suite's protection of existing supported behaviour unless that behaviour is intentionally being changed.
 
-Do not delete, weaken, bypass, or rewrite valid tests merely to make an implementation pass.
+New or corrected behaviour must receive appropriate protection against regression.
 
-Changed behaviour must be appropriately verified.
+### 3.5 Satisfy Repository Quality Gates
 
-A bug fix should normally include a regression test capable of demonstrating the previous failure.
+Completed code must satisfy all applicable repository-defined mechanical quality gates.
 
-### 3.5 Pass the Repository's Mechanical Quality Gates
-
-A change is not complete until the applicable repository quality gates pass.
-
-These normally include:
-
-* TypeScript compilation or type checking;
-* linting;
-* formatting checks;
-* automated tests;
-* required coverage thresholds;
-* build verification; and
-* subsystem-specific checks.
-
-The repository configuration and CI pipeline define the authoritative commands.
-
-Do not bypass, suppress, or weaken a quality gate merely to make a change pass.
+Quality gates are defined by the repository rather than by this generic standard.
 
 ---
 
@@ -135,13 +125,13 @@ Prefer representations that make invalid states difficult or impossible to const
 
 Use explicit types where they establish an important contract, particularly for:
 
-* exported functions;
-* public methods;
-* public properties;
-* external interfaces;
-* callbacks crossing module boundaries;
-* data structures representing domain concepts; and
-* places where inference would obscure intent.
+- exported functions;
+- public methods;
+- public properties;
+- external interfaces;
+- callbacks crossing module boundaries;
+- structures representing important domain concepts; and
+- places where inference would obscure intent.
 
 Within an implementation, prefer TypeScript inference when the inferred type is clear, precise, and stable.
 
@@ -153,7 +143,7 @@ Use `unknown` for values whose type has not yet been established.
 
 Narrow or validate the value before use.
 
-`any` is appropriate only when loss of type information is genuinely unavoidable and deliberate.
+Use `any` only where loss of type information is unavoidable and deliberate.
 
 ### 4.4 Treat Type Assertions as Escape Hatches
 
@@ -191,7 +181,7 @@ Do not split cohesive logic merely to satisfy an arbitrary function size.
 
 Expose only what callers need.
 
-Implementation details should remain private to the module or class unless there is a clear reason to make them part of the contract.
+Implementation details should remain private unless there is a clear reason to make them part of a public contract.
 
 Avoid expanding public APIs for speculative future use.
 
@@ -223,7 +213,7 @@ Do not reinvent solved, general-purpose functionality merely because it is strai
 
 Before implementing reusable commodity functionality, determine whether it is already provided by:
 
-1. the JavaScript or Node.js platform;
+1. the language or runtime platform;
 2. an existing project dependency; or
 3. a mature, well-maintained package.
 
@@ -231,16 +221,15 @@ Prefer a battle-tested implementation when it materially reduces correctness ris
 
 Examples include established solutions for areas such as:
 
-* schema validation;
-* date and time handling;
-* parsing established formats;
-* cryptographic primitives;
-* protocol implementations;
-* retries and backoff;
-* serialization;
-* globbing;
-* command-line parsing; and
-* other mature commodity functionality.
+- schema validation;
+- date and time handling;
+- parsing established formats;
+- cryptographic primitives;
+- protocol implementations;
+- retries and backoff;
+- serialization;
+- globbing; and
+- command-line parsing.
 
 ### 6.2 Dependencies Must Still Earn Their Place
 
@@ -248,14 +237,14 @@ Do not add a dependency blindly.
 
 Consider:
 
-* maintenance status;
-* API stability;
-* ecosystem adoption;
-* compatibility with the repository;
-* security history;
-* dependency footprint;
-* licensing where relevant; and
-* whether the capability required is substantial enough to justify another dependency.
+- maintenance status;
+- API stability;
+- ecosystem adoption;
+- compatibility;
+- security history;
+- dependency footprint;
+- licensing where relevant; and
+- whether the required capability is substantial enough to justify another dependency.
 
 Implement locally when the requirement is genuinely project-specific, trivial, or when a dependency would introduce more complexity or risk than it removes.
 
@@ -271,9 +260,9 @@ Errors should retain useful diagnostic context.
 
 When wrapping or translating an error:
 
-* preserve the original cause where useful;
-* add context that the lower layer could not know; and
-* avoid duplicating identical logging at multiple layers.
+- preserve the original cause where useful;
+- add context that the lower layer could not know; and
+- avoid duplicating identical logging at multiple layers.
 
 Do not use exceptions as routine control flow when a normal outcome can be represented more clearly in the type system.
 
@@ -287,11 +276,11 @@ Make asynchronous behaviour explicit.
 
 Avoid:
 
-* floating promises;
-* accidental sequential execution where safe concurrency is intended;
-* uncontrolled concurrency;
-* resources that are not reliably released; and
-* asynchronous work whose failures cannot reach an appropriate owner.
+- floating promises;
+- accidental sequential execution where safe concurrency is intended;
+- uncontrolled concurrency;
+- resources that are not reliably released; and
+- asynchronous work whose failures cannot reach an appropriate owner.
 
 Use timeouts, cancellation, concurrency limits, and cleanup when required by the behaviour of the subsystem rather than applying them mechanically everywhere.
 
@@ -307,18 +296,16 @@ Names should communicate domain meaning and intent.
 
 Prefer terminology already used consistently by the codebase and domain.
 
-Avoid unexplained abbreviations, vague placeholders, and names that reveal implementation machinery instead of purpose when a clearer domain name exists.
+Avoid unexplained abbreviations and vague placeholders when a more precise name is available.
 
-Examples of weak names include:
+Names such as the following are often too weak when used without qualification:
 
-* `data`;
-* `result`;
-* `manager`;
-* `helper`;
-* `utils`;
-* `processor`;
-
-when a more precise name is available.
+- `data`;
+- `result`;
+- `manager`;
+- `helper`;
+- `utils`;
+- `processor`.
 
 Use control flow that a reader can follow without mentally decoding unnecessary cleverness.
 
@@ -328,20 +315,22 @@ Conciseness is valuable only when it also preserves clarity.
 
 ## 10. Documentation
 
-Documentation should explain information that the code itself cannot communicate adequately.
+Documentation should communicate information that the code and type system cannot adequately communicate themselves.
 
 Document where useful:
 
-* public contracts;
-* non-obvious invariants;
-* architectural decisions;
-* important constraints;
-* unusual edge cases;
-* externally imposed behaviour;
-* subtle failure semantics; and
-* the reason behind a surprising implementation choice.
+- public contracts;
+- non-obvious invariants;
+- architectural decisions;
+- important constraints;
+- unusual edge cases;
+- externally imposed behaviour;
+- subtle failure semantics; and
+- the reason behind a surprising implementation choice.
 
-Do not add comments or TSDoc that merely restate names, parameter types, return types, or obvious implementation steps.
+For published APIs, documentation is part of the consumer-facing contract where signatures and types alone do not adequately communicate correct use or behaviour.
+
+Do not add comments or documentation that merely restate names, parameter types, return types, or obvious implementation steps.
 
 Comments should explain **why** when the **what** is already evident from the code.
 
@@ -353,57 +342,18 @@ Tests should verify observable behaviour and important invariants rather than mi
 
 Test the paths where mistakes matter, including as appropriate:
 
-* normal behaviour;
-* boundary conditions;
-* invalid runtime input;
-* expected failures;
-* state transitions;
-* integration boundaries; and
-* previously observed regressions.
+- normal behaviour;
+- boundary conditions;
+- invalid runtime input;
+- expected failures;
+- state transitions;
+- integration boundaries; and
+- previously observed regressions.
+
+A bug fix should normally include a regression test capable of demonstrating the previous failure.
 
 Tests must be deterministic unless nondeterminism is itself the behaviour under test.
 
-Mock only where isolation is useful. Do not mock a dependency merely because it can be mocked.
+Mock where isolation is useful. Do not mock a dependency merely because it can be mocked.
 
 Prefer tests that remain valid through reasonable internal refactoring.
-
----
-
-## 12. Scope and Change Discipline
-
-Make the smallest **coherent** change that fully solves the task.
-
-This does not mean minimizing line count or avoiding necessary refactoring.
-
-It means avoiding unrelated change.
-
-Do not, without a task-derived reason:
-
-* refactor unrelated code;
-* rename unrelated concepts;
-* change repository configuration;
-* introduce new architectural patterns;
-* add dependencies;
-* broaden public APIs; or
-* normalize surrounding code merely because it differs from personal preference.
-
-When the requested change exposes a nearby structural problem that must be addressed for a correct solution, fix the relevant structure rather than layering a workaround on top of it.
-
----
-
-## 13. Completion Standard
-
-Before considering a change complete:
-
-1. inspect the resulting implementation as a whole;
-2. confirm that it matches the requested behaviour;
-3. confirm that important invariants remain intact;
-4. inspect the final diff for unintended changes;
-5. run the applicable mechanical quality gates; and
-6. resolve failures at their cause rather than suppressing them.
-
-Correct compilation is necessary but not sufficient.
-
-Passing tests is necessary but not sufficient.
-
-The completed change should also fit the architecture and remain understandable to the next engineer who works on it.
