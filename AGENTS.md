@@ -51,11 +51,28 @@ node dist/bin.js lint --example
 The two corpus checks need `npm run build` to have run first, because they
 execute the built binary.
 
-CI runs the same gates on Linux and Windows against Node 22 and 24, and
-additionally installs the packed tarball into a fresh project and runs the
-binary through `node_modules/.bin`. That last job exists because an entry point
-reached through a symlink can silently exit 0 without running, which the
-in-process tests cannot see.
+CI runs the first five on Linux and Windows against Node 22 and 24. The example
+corpus is covered separately, by a job that installs the packed tarball into a
+fresh project and runs the binary through `node_modules/.bin`. That job exists
+because an entry point reached through a symlink can silently exit 0 without
+running, which the in-process tests cannot see.
+
+## Working in git
+
+Work on a feature branch taken from `main`; do not commit to `main` directly.
+
+One commit per validated change, not one commit per session: run the gates above
+before each commit, so that every commit on the branch is a state the gates
+passed. A change that needs several coherent steps is several commits.
+
+Integrate with `git merge --ff-only`, which keeps history linear. If the merge
+will not fast-forward, `main` has moved and the branch needs rebasing onto it
+first; do not resolve that by creating a merge commit.
+
+Commit messages state what changed and why, in prose. An agent's commits carry a
+`Co-Authored-By` trailer identifying it.
+
+Nothing is pushed or published from here without being asked.
 
 ## Repository-specific requirements
 
