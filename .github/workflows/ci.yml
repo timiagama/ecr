@@ -39,6 +39,13 @@ jobs:
       - run: npm test
       - run: npm run build
 
+      # The repository's own specification is an ECR corpus, so the linter is
+      # run against it here. It is an authoritative gate: a spec edit that
+      # breaks a reference must fail the build, not be caught by hand later.
+      # Running it on every matrix leg also exercises the corpus walk on both
+      # path-separator conventions.
+      - run: node dist/bin.js lint spec
+
   package:
     # Installs the packed tarball the way a user would and runs the binary
     # through node_modules/.bin. On Linux that entry is a symlink, which is
