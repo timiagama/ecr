@@ -1,0 +1,194 @@
+# ECR Navigation Protocol for Coding Agents
+
+You are grounding an implementation task against a documentation corpus written
+with **Explicit Constraint Referencing (ECR)**. **Do not load the corpus
+wholesale.** Every architectural document carries a stable numeric identity (a
+*DocID*), every sub-heading carries a *SectionID*, and every document declares its
+external references, each with a type. That structure lets you walk to exactly
+the sections a task depends on, and stop.
+
+Read this once when a task starts, then navigate on demand. Keep the corpus out
+of your context except the sections you are actively using.
+
+## 1 - What the structure gives you
+
+**DocID.** The number in a document's H1:
+
+```
+# 4.2 - Payment Processing Contract
+```
+
+- DocIDs are globally unique and stable. The DocID **is** the document's
+  identity — not its title, not its path.
+- Many corpora also start each filename with its DocID and group documents
+  into folders by first segment (`4. Payments/4.2 - Payment Processing
+  Contract.md`). Where yours does, you can jump to a directory from the number
+  alone — but ECR does not require it, so when the path and the H1 disagree,
+  the H1 is authoritative.
+- DocIDs may be any depth, and one DocID may be a prefix of another. `8.1` and
+  `8.1.3` may both be documents, and `8.10` is a third, unrelated to either.
+  **Compare identifiers by segment, never by string prefix.**
+
+**SectionID.** A DocID, then `#`, then a dot-separated section path:
+
+```
+## 8.1#3 - Retry Semantics
+### 8.1#3.1 - Backoff
+```
+
+`8.1#3.1` is document `8.1`, section 3, sub-section 1. The `#` is what makes the
+identifier unambiguous: everything before it is the document, everything after
+it is the path within that document. A heading at depth *d* carries *d − 1*
+section-path segments.
+
+**References.** Every architectural document carries a `## References` section
+declaring its typed, document-level references. Read it before acting on the
+document. References entries cite documents, never sections.
+
+**Inline references.** `see X` and `per X` point into another document, either
+at a whole document (`see 8.1`) or at a precise section (`per 8.1#3.2`). They
+may be capitalised at the start of a sentence, so match `[Ss]ee` and `[Pp]er`.
+
+**Meta-documents.** `README`, `CLAUDE.md`, `AGENTS.md`, contributing guides and
+changelogs have no DocID and sit outside the reference graph. Don't expect to
+reach them by number.
+
+## 2 - How to find things
+
+Patterns are ripgrep. Escape the dots in an identifier. If `rg` is not
+installed, GNU grep takes the same patterns: use `grep -rnE` for `rg -n`,
+`grep -rlE` for `rg -l`, and `grep -rnP` for `rg -P -n`.
+
+**Open the document for a DocID.**
+
+```bash
+rg -l "^# 8\.1[^0-9.#]" docs      # the H1 for 8.1, not 8.10 or 8.1.3
+```
+
+**Resolve a SectionID** — jump straight to the heading:
+
+```bash
+rg -n "^#+ 8\.1#3\.1([^0-9]|$)" docs
+```
+
+**Read a document's declared references (forward edges):**
+
+```bash
+rg -n -A 40 "^## References" "docs/8. Orchestration/8.1 - Workflow Orchestration Contract.md"
+```
+
+**Find who relies on a document, or on one specific section (reverse edges).**
+Nothing precomputes this — grep the citations. Run this *before editing a
+section* to see exactly who leans on that spot.
+
+| Question | Pattern |
+|---|---|
+| Who references document `8.1`? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1(\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
+| Who references any section of `8.1`? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1#" docs` |
+| Who references section `8.1#3` or below? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1#3\b" docs` |
+| Either the document or any section? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1(#[0-9.]*\|\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
+| Every section-precise reference in the corpus | `rg -n "\b([Ss]ee\|[Pp]er) [0-9.]+#" docs` |
+| References-section entries citing `8.1` | `rg -n "^\s*-\s*\[?8\.1[^0-9.#]" docs` |
+
+The document-only pattern carries a trailing group because `\b` cannot terminate
+a dotted identifier: `.` and `#` are both non-word characters, so `8\.1\b`
+matches inside `8.1.3`, `8.1#3` and `8.1.3#1`. The trailing group says what may
+follow a bare DocID, and the `\.[^0-9]` / `\.$` alternatives admit a
+sentence-ending full stop so that `see 8.1.` matches while `see 8.1.3` does not.
+
+Where ripgrep is built with PCRE2, `-P` allows the clearer form:
+
+```bash
+rg -P -n "\b([Ss]ee|[Pp]er) 8\.1(?!#)(?![0-9])(?!\.[0-9])" docs
+```
+
+**Find everything a document governs.** This is the high-value query that
+similarity search cannot answer — a generic contract governing many specific
+documents that don't resemble it textually:
+
+```bash
+rg -ln "^\s*-\s*\[?8\.1[^0-9.#].*\(authority" docs
+```
+
+Swap `authority` for `constraint` / `contract` / `dependency` to pull the other
+edge types.
+
+**Map the whole corpus, one line per document:**
+
+```bash
+rg -n "^# [0-9]" docs
+```
+
+**Find the document owning a concept by name** — the fallback when you have no
+ID to follow:
+
+```bash
+rg -li "idempotency key" docs
+```
+
+## 3 - What each reference obligates you to do
+
+A References entry reads `{DocID} - {Title} ({direction} - {explanation})`. The
+edge points **from this document to the cited one**. The middle column is what
+ECR defines; the right-hand column is how to act on it, which ECR does not
+define:
+
+| Direction | Meaning (ECR) | Agent action (recommended) |
+|---|---|---|
+| **authority** | the cited document governs this one | Read it first. Treat it as the governing source. Flag apparent conflicts. |
+| **constraint** | the cited document restricts this one | Check your change does not violate it. |
+| **contract** | the cited document defines obligations or interfaces | Conform exactly — schemas, field names, typed outputs. |
+| **dependency** | this document consumes the cited one | Read it to use it correctly. |
+
+The `{explanation}` says *why* the edge exists. Use it to judge whether an edge
+is relevant to your current change before you open the target.
+
+**Precedence.** ECR does not define one. It records that a document governs
+another; it does not say what to do when two governing documents disagree,
+because resolving that requires reading what the constraints mean, which is
+outside what ECR claims. Authority is therefore domain-scoped rather than a
+ranking: each authority document governs its own domain and none outranks
+another.
+
+So when two authorities appear to conflict, surface it rather than picking a
+winner. If the corpus declares its own precedence hierarchy, it does so in a map
+document of its own — follow that. If it does not, say so and ask.
+
+## 4 - Grounding protocol
+
+For any implementation task:
+
+1. **Orient.** Identify the DocID(s) the task touches.
+2. **Open the primary document** by its DocID.
+3. **Read its `## References` before writing code.** Open every `authority` and
+   `constraint` it cites; treat `contract` entries as obligations to satisfy;
+   read `dependency` entries you will consume. Use the `{explanation}` to skip
+   edges irrelevant to your change.
+4. **Follow inline `see`/`per` to the exact SectionID named** — open that one
+   section, not the whole document.
+5. **Before finishing, reverse-check at section granularity.** Grep backlinks to
+   the section you changed (§2). This is the step that surfaces the documents
+   relying on what you changed — the ones your target never mentions, and the
+   ones a change can silently break, because nothing in the file you are
+   reading points at them.
+6. **Load only what you need.** Pull sections, not the corpus. A few extra reads
+   of the right slice beat one read of everything.
+7. **On ambiguity, defer** to the domain authority rather than guessing.
+
+## 5 - Gotchas
+
+- **Match numbers, not dashes.** Separators appear as hyphen `-`, en dash `–`
+  and em dash `—`, sometimes mixed within one line. Never anchor a pattern on a
+  dash.
+- **Never match an identifier by string prefix.** `8.1` is not a prefix of
+  `8.10` in identifier terms, and `8.1.3` is a different document from section
+  `8.1#3`. Use the patterns in §2 rather than improvising.
+- **`see` and `per` may be capitalised.** A pattern matching only lowercase
+  silently under-reports backlinks, which is the one failure this protocol
+  exists to prevent.
+- **A bare number in prose is not an edge.** Only `see`/`per` inline references
+  and `## References` entries are load-bearing. But opening a document is cheap —
+  when unsure, look.
+- **Corpora drift.** A document may deviate from the convention. If a recipe
+  returns nothing, loosen it — drop the anchor, search by title text — before
+  concluding the target does not exist.

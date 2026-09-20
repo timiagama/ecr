@@ -44,7 +44,8 @@
   "author": "Timi Agama",
   "license": "Apache-2.0",
   "scripts": {
-    "build": "npm run clean && tsc",
+    "build": "npm run clean && npm run generate:protocol && tsc",
+    "generate:protocol": "node scripts/generate-navigation-protocol.mjs",
     "test": "vitest run",
     "lint": "eslint src/ tests/",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.eslint.json",
