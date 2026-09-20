@@ -1,10 +1,12 @@
-# TypeScript Coding-Agent Contract
+# 0.2 - TypeScript Coding-Agent Contract
 
-## 1. Purpose
+**Version:** 0.1
+
+## 0.2#1 - Purpose
 
 This contract governs how a coding agent should work when modifying a TypeScript repository.
 
-The **TypeScript Engineering Standard** defines the expected properties of the code.
+The TypeScript Engineering Standard (see 0.1) defines the expected properties of the code.
 
 This contract defines the agent's operating discipline while changing it.
 
@@ -12,7 +14,7 @@ Exercise engineering judgment. Do not substitute mechanical rule-following for u
 
 ---
 
-## 2. Understand Before Changing
+## 0.2#2 - Understand Before Changing
 
 Before modifying code:
 
@@ -30,7 +32,7 @@ Prefer explicit repository requirements over conventions inferred solely from re
 
 ---
 
-## 3. Preserve Existing Intent
+## 0.2#3 - Preserve Existing Intent
 
 Treat established architecture, domain concepts, public contracts, tests, documented invariants, and explicit repository decisions as constraints unless the task requires them to change.
 
@@ -42,7 +44,7 @@ If the requested change exposes a genuine conflict with an existing invariant or
 
 ---
 
-## 4. Make the Smallest Coherent Change
+## 0.2#4 - Make the Smallest Coherent Change
 
 Implement the complete change required by the task, including necessary supporting changes.
 
@@ -67,7 +69,7 @@ When the requested change exposes a nearby structural problem that must be addre
 
 ---
 
-## 5. Prefer Existing Solutions Where Appropriate
+## 0.2#5 - Prefer Existing Solutions Where Appropriate
 
 Before implementing general-purpose functionality, determine whether the required capability is already provided by:
 
@@ -78,11 +80,11 @@ Before implementing general-purpose functionality, determine whether the require
 
 Do not create bespoke commodity infrastructure merely because it is easy to generate.
 
-Use the TypeScript Engineering Standard and repository-specific constraints when deciding whether an additional dependency is preferable to a local implementation.
+Apply the dependency principles in the TypeScript Engineering Standard (see 0.1#6) together with repository-specific constraints when deciding whether an additional dependency is preferable to a local implementation.
 
 ---
 
-## 6. Do Not Manufacture Success
+## 0.2#6 - Do Not Manufacture Success
 
 Resolve failures at their cause.
 
@@ -98,11 +100,11 @@ Do not make a change appear successful by:
 - disabling or weakening quality gates; or
 - changing expected behaviour merely to match an incorrect implementation.
 
-If an existing test, type, rule, or expectation is genuinely wrong and must change to satisfy the task, change it deliberately and consistently with the engineering standard and repository requirements.
+If an existing test, type, rule, or expectation is genuinely wrong and must change to satisfy the task, change it deliberately and consistently with the non-negotiable engineering invariants (per 0.1#3) and repository requirements.
 
 ---
 
-## 7. Verify the Change
+## 0.2#7 - Verify the Change
 
 Before considering a task complete:
 
@@ -115,13 +117,13 @@ Before considering a task complete:
 
 Verification must cover the behaviour changed, not merely successful compilation.
 
-Use the repository's authoritative verification procedures rather than inventing alternatives.
+Use the repository's authoritative verification procedures. Completed code must satisfy the applicable repository quality gates per 0.1#3.5.
 
 Do not claim that a check passed unless it was actually run successfully.
 
 ---
 
-## 8. Completion Report
+## 0.2#8 - Completion Report
 
 Keep the completion report concise and factual.
 
@@ -132,3 +134,7 @@ State:
 - any unresolved issue, limitation, or assumption that materially affects correctness.
 
 Do not claim successful completion when required verification failed or could not be performed.
+
+## References
+
+- 0.1 - TypeScript Engineering Standard (authority - defines the engineering properties and invariants that changes made under this contract must satisfy)

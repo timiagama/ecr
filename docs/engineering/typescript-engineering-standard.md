@@ -1,12 +1,14 @@
-# TypeScript Engineering Standard
+# 0.1 - TypeScript Engineering Standard
 
-## 1. Purpose
+**Version:** 0.1
+
+## 0.1#1 - Purpose
 
 This standard defines the engineering properties expected of TypeScript code.
 
 It is designed for capable engineers and frontier coding models. It establishes required invariants, engineering principles, and defaults without prescribing routine implementation decisions that are better resolved from context.
 
-### 1.1 Exercise Engineering Judgment
+### 0.1#1.1 - Exercise Engineering Judgment
 
 This standard is not a substitute for engineering judgment.
 
@@ -20,7 +22,7 @@ Where no explicit constraint applies, choose the solution that best fits:
 
 Do not mechanically apply a guideline when doing so would make the code less clear, less correct, or less maintainable.
 
-### 1.2 Repository-Specific Requirements
+### 0.1#1.2 - Repository-Specific Requirements
 
 Follow explicit repository architecture, conventions, configuration, and local engineering requirements.
 
@@ -30,7 +32,7 @@ A repeated pattern in existing code is not necessarily an intentional current co
 
 ---
 
-## 2. Core Engineering Principles
+## 0.1#2 - Core Engineering Principles
 
 Code should optimize for:
 
@@ -51,9 +53,9 @@ Correct compilation and passing tests are necessary but not sufficient. Complete
 
 ---
 
-## 3. Non-Negotiable Invariants
+## 0.1#3 - Non-Negotiable Invariants
 
-### 3.1 Preserve Type Safety
+### 0.1#3.1 - Preserve Type Safety
 
 Do not resolve a type error by weakening the type system unless the domain genuinely requires a less constrained type.
 
@@ -70,7 +72,7 @@ Prefer `unknown` and runtime narrowing over `any`.
 
 Do not introduce unjustified assertions, non-null assertions, suppression directives, or unnecessarily broad types merely to satisfy the compiler.
 
-### 3.2 Validate Runtime Boundaries
+### 0.1#3.2 - Validate Runtime Boundaries
 
 TypeScript types do not validate runtime data.
 
@@ -89,7 +91,7 @@ Examples include:
 
 Do not repeatedly revalidate data after it has entered a trusted, typed boundary unless the architecture requires it.
 
-### 3.3 Do Not Hide Failures
+### 0.1#3.3 - Do Not Hide Failures
 
 Failures must remain visible to an appropriate owner.
 
@@ -97,13 +99,13 @@ Do not silently swallow errors or convert failures into apparently successful ou
 
 Preserve enough information for failures to be diagnosed, including the original cause where appropriate.
 
-### 3.4 Preserve Behavioural Protection
+### 0.1#3.4 - Preserve Behavioural Protection
 
 A change must not reduce the test suite's protection of existing supported behaviour unless that behaviour is intentionally being changed.
 
 New or corrected behaviour must receive appropriate protection against regression.
 
-### 3.5 Satisfy Repository Quality Gates
+### 0.1#3.5 - Satisfy Repository Quality Gates
 
 Completed code must satisfy all applicable repository-defined mechanical quality gates.
 
@@ -111,9 +113,9 @@ Quality gates are defined by the repository rather than by this generic standard
 
 ---
 
-## 4. TypeScript and Type Design
+## 0.1#4 - TypeScript and Type Design
 
-### 4.1 Use Types to Model the Domain
+### 0.1#4.1 - Use Types to Model the Domain
 
 Types should express meaningful distinctions in the domain rather than merely describe JavaScript storage shapes.
 
@@ -121,7 +123,7 @@ Where states have different valid data or behaviour, model those distinctions ex
 
 Prefer representations that make invalid states difficult or impossible to construct.
 
-### 4.2 Be Explicit at Important Boundaries
+### 0.1#4.2 - Be Explicit at Important Boundaries
 
 Use explicit types where they establish an important contract, particularly for:
 
@@ -137,7 +139,7 @@ Within an implementation, prefer TypeScript inference when the inferred type is 
 
 Do not duplicate type information merely for verbosity.
 
-### 4.3 Prefer `unknown` to `any`
+### 0.1#4.3 - Prefer `unknown` to `any`
 
 Use `unknown` for values whose type has not yet been established.
 
@@ -145,7 +147,7 @@ Narrow or validate the value before use.
 
 Use `any` only where loss of type information is unavoidable and deliberate.
 
-### 4.4 Treat Type Assertions as Escape Hatches
+### 0.1#4.4 - Treat Type Assertions as Escape Hatches
 
 An assertion tells the compiler something it cannot prove.
 
@@ -153,13 +155,13 @@ Prefer narrowing, validation, better modelling, or a better API over an assertio
 
 Do not use assertions to conceal uncertainty about runtime data.
 
-### 4.5 Make Absence Explicit
+### 0.1#4.5 - Make Absence Explicit
 
 Represent optionality and absence deliberately.
 
 Do not interchange `undefined`, `null`, missing properties, empty strings, sentinel values, and other representations of absence without a domain reason.
 
-### 4.6 Prefer Exhaustive Handling
+### 0.1#4.6 - Prefer Exhaustive Handling
 
 When a finite set of states is known, model it so the compiler can help detect unhandled cases.
 
@@ -167,9 +169,9 @@ Discriminated unions are preferred where they make state transitions or variants
 
 ---
 
-## 5. Functions, Modules, and Classes
+## 0.1#5 - Functions, Modules, and Classes
 
-### 5.1 Organize Around Responsibilities
+### 0.1#5.1 - Organize Around Responsibilities
 
 A function or module should have a coherent responsibility.
 
@@ -177,7 +179,7 @@ Split code when doing so separates distinct concepts, isolates change, clarifies
 
 Do not split cohesive logic merely to satisfy an arbitrary function size.
 
-### 5.2 Keep Public Surfaces Small
+### 0.1#5.2 - Keep Public Surfaces Small
 
 Expose only what callers need.
 
@@ -185,7 +187,7 @@ Implementation details should remain private unless there is a clear reason to m
 
 Avoid expanding public APIs for speculative future use.
 
-### 5.3 Choose Abstractions for Their Semantics
+### 0.1#5.3 - Choose Abstractions for Their Semantics
 
 Use functions, modules, classes, factories, or other abstractions according to the problem being modelled.
 
@@ -195,7 +197,7 @@ Functions and modules are often preferable for stateless transformations and orc
 
 Do not introduce an abstraction merely because a design pattern exists for the problem.
 
-### 5.4 Prefer Immutability by Default
+### 0.1#5.4 - Prefer Immutability by Default
 
 Prefer immutable data where mutation provides no meaningful benefit.
 
@@ -205,9 +207,9 @@ Use controlled mutation when it produces a simpler or materially more efficient 
 
 ---
 
-## 6. Dependencies and Existing Solutions
+## 0.1#6 - Dependencies and Existing Solutions
 
-### 6.1 Prefer Proven Implementations Over Bespoke Commodity Code
+### 0.1#6.1 - Prefer Proven Implementations Over Bespoke Commodity Code
 
 Do not reinvent solved, general-purpose functionality merely because it is straightforward to implement.
 
@@ -231,7 +233,7 @@ Examples include established solutions for areas such as:
 - globbing; and
 - command-line parsing.
 
-### 6.2 Dependencies Must Still Earn Their Place
+### 0.1#6.2 - Dependencies Must Still Earn Their Place
 
 Do not add a dependency blindly.
 
@@ -250,7 +252,7 @@ Implement locally when the requirement is genuinely project-specific, trivial, o
 
 ---
 
-## 7. Error and Outcome Design
+## 0.1#7 - Error and Outcome Design
 
 Distinguish between expected domain outcomes and exceptional failures.
 
@@ -270,7 +272,7 @@ Do not return ambiguous sentinel values when the type can express the outcome di
 
 ---
 
-## 8. Asynchronous Work and Resources
+## 0.1#8 - Asynchronous Work and Resources
 
 Make asynchronous behaviour explicit.
 
@@ -290,7 +292,7 @@ The code responsible for acquiring a resource should either release it reliably 
 
 ---
 
-## 9. Naming and Readability
+## 0.1#9 - Naming and Readability
 
 Names should communicate domain meaning and intent.
 
@@ -313,7 +315,7 @@ Conciseness is valuable only when it also preserves clarity.
 
 ---
 
-## 10. Documentation
+## 0.1#10 - Documentation
 
 Documentation should communicate information that the code and type system cannot adequately communicate themselves.
 
@@ -336,7 +338,7 @@ Comments should explain **why** when the **what** is already evident from the co
 
 ---
 
-## 11. Testing
+## 0.1#11 - Testing
 
 Tests should verify observable behaviour and important invariants rather than mirror implementation structure.
 
@@ -357,3 +359,5 @@ Tests must be deterministic unless nondeterminism is itself the behaviour under 
 Mock where isolation is useful. Do not mock a dependency merely because it can be mocked.
 
 Prefer tests that remain valid through reasonable internal refactoring.
+
+## References

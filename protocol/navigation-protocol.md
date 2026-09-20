@@ -41,7 +41,17 @@ identifier unambiguous: everything before it is the document, everything after
 it is the path within that document. A heading at depth *d* carries *d − 1*
 section-path segments.
 
-**References.** Every architectural document carries a `## References` section
+**SectionID stability.** SectionIDs are identities, not sequence numbers. They need
+not be contiguous or appear in numeric order, so do not renumber existing sections
+merely to remove gaps or reflect document order. Existing SectionIDs remain stable
+when unrelated sections are inserted or reordered. Nested SectionIDs encode their
+parent path, however: moving a subsection under a different parent, or promoting it
+to another heading level, changes its identity and requires affected references to
+be updated. Prefer a top-level SectionID for a consumer reference when it expresses
+the required constraint precisely enough; use a subsection address when the narrower
+rule is what the consumer actually depends on.
+
+**References.** Every ECR document carries a `## References` section
 declaring its typed, document-level references. Read it before acting on the
 document. References entries cite documents, never sections.
 
@@ -49,9 +59,10 @@ document. References entries cite documents, never sections.
 at a whole document (`see 8.1`) or at a precise section (`per 8.1#3.2`). They
 may be capitalised at the start of a sentence, so match `[Ss]ee` and `[Pp]er`.
 
-**Meta-documents.** `README`, `CLAUDE.md`, `AGENTS.md`, contributing guides and
-changelogs have no DocID and sit outside the reference graph. Don't expect to
-reach them by number.
+**Meta-documents.** Repository-level instruction and orientation files such as
+`README`, `CLAUDE.md`, `AGENTS.md`, contributing guides and changelogs may sit
+outside the reference graph and therefore carry no DocID. Do not assume every
+Markdown file in or near a corpus is an ECR document.
 
 ## 2 - How to find things
 
@@ -167,7 +178,7 @@ For any implementation task:
 4. **Follow inline `see`/`per` to the exact SectionID named** — open that one
    section, not the whole document.
 5. **Before finishing, reverse-check at section granularity.** Grep backlinks to
-   the section you changed (§2). This is the step that surfaces the documents
+   the section you changed using the reverse-lookup patterns above. This is the step that surfaces the documents
    relying on what you changed — the ones your target never mentions, and the
    ones a change can silently break, because nothing in the file you are
    reading points at them.
@@ -182,7 +193,7 @@ For any implementation task:
   dash.
 - **Never match an identifier by string prefix.** `8.1` is not a prefix of
   `8.10` in identifier terms, and `8.1.3` is a different document from section
-  `8.1#3`. Use the patterns in §2 rather than improvising.
+  `8.1#3`. Use the lookup patterns in this protocol rather than improvising.
 - **`see` and `per` may be capitalised.** A pattern matching only lowercase
   silently under-reports backlinks, which is the one failure this protocol
   exists to prevent.
