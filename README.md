@@ -49,7 +49,7 @@ That is how an agent can operate on a codebase far larger than its context
 window. The model builds the context it needs as it works.
 
 Code already gives the agent stable identifiers to search for. Architecture
-prose, even with general purpose links, usually does not.
+prose usually does not.
 
 The "retry policy" is "retry semantics" in one document, "backoff rules" in
 another, "the orchestration contract" in a third. There is nothing exact to
@@ -71,13 +71,17 @@ keep in sync.
 | Go to Definition | forward reference | What does this document rely on or answer to? |
 | Find All References | reverse reference | What elsewhere relies on or refers to this? |
 
-> The important part is not that documents can link to each other. It is that
-> the identifiers and relationships are explicit enough for an agent to traverse
-> them mechanically in both directions. ECR references sections, not just documents,
-> so the agent can retrieve the exact constraint that applies rather than loading 
-> the document that happens to contain it.
+> General-purpose links help you navigate from a known source to a known
+> destination. ECR adds something different: stable section identities and
+> explicit relationships that an agent can traverse mechanically in both
+> directions.
+> 
+> That means the agent can **retrieve a constraint from the specific section
+> that defines it rather than loading the document that contains it**. And it
+> can search backwards to discover everything elsewhere in the corpus that
+> refers to that constraint.
 
-The second row is the one that matters. Forward references surface the
+The two directions solve different problems. Forward references surface the
 constraints a document knows it must obey. Reverse references surface
 everything elsewhere in the corpus that relies on it — relationships the
 target has no reason to know exist, and each one a limit on what you can
@@ -85,7 +89,7 @@ safely change.
 
 In practice, both operations are one search.
 
-One document sets a constraint. The sub-heading containing the constraint has
+For example, one document sets a constraint. The sub-heading containing the constraint has
 a stable identifier `8.1#3.2`:
 
 ```markdown
@@ -186,17 +190,17 @@ grep -RInE "^#+ 8\.1#3([^0-9]|$)" docs/
 grep -RInE "([Ss]ee|[Pp]er) 8\.1#3([^0-9]|$)" docs/
 ```
 
-The second command is the one that earns its keep. On the example corpus it
-returns five documents across four folders, three of which cite `8.1#3.2`
-specifically: downstream documents a change to the retry bounds could break.
-One of them, settlement, appears nowhere in the orchestration contract.
+The reverse search is where ECR exposes relationships the target section
+cannot know about. On the example corpus it returns five documents across
+four folders, three of which cite `8.1#3.2` specifically: downstream
+documents a change to the retry bounds could break. One of them, settlement, appears nowhere in the orchestration contract.
 
 Match `[Ss]ee` and `[Pp]er`, not just lowercase: a reference at the start of a
 sentence is still a reference, and a pattern that misses it under-reports the
 exact thing you are searching for. The `([^0-9]|$)` ending stops `8.1#3` also
 matching `8.1#30`. Matching a whole document rather than its sections needs a
-stronger guard, because `.` and `#` are not word boundaries — the navigation
-protocol carries the tested pattern.
+stronger guard, because `.` and `#` are not word boundaries — the supplied
+coding agent navigation protocol carries the tested pattern.
 
 ## Why `grep` is enough
 
@@ -226,18 +230,16 @@ I converted a documentation corpus to ECR: **47 Markdown files**, 40 carrying
 section-precise.
 
 Then I pointed a coding agent at the navigation protocol, told it to use ECR,
-and started building. It produced around **19,000 lines of TypeScript across 124
-source files** with **34 test files**. Retrieval was `grep`. There was no server, no
-index, no embedding model and no MCP tool in the loop — the agent read the
-protocol, walked the references, and pulled the sections it needed.
+and started building. It produced around **19,000 lines of TypeScript across
+124 source files** with **34 test files**. Retrieval was `grep`. There was no
+server, no index, no embedding model and no MCP tool in the loop — the agent
+read the protocol, walked the references, and pulled the sections it needed.
 
 In my judgement the result contained unusually few errors for a build of that
-complexity, and the reverse-reference step is where I'd put the credit: it
-repeatedly surfaced constraints and assumptions in other documents that the
-document I was working from made no mention of. That's a subjective claim
-about an unpublished, commercially confidential corpus, and you should weight
-it accordingly. The mechanism underneath it, though, is not subjective — you
-can check that on your own documentation in about two minutes.
+complexity. That's a subjective claim about an unpublished, commercially
+confidential corpus, and you should weight it accordingly. The mechanism
+underneath it, though, is not subjective — you can check that on your own
+documentation in about two minutes.
 
 ## Getting started
 
@@ -280,7 +282,7 @@ npx @timiagama/ecr stats --example
 
 ### What the commands do
 
-`init` writes [the navigation protocol](protocol/navigation-protocol.md) into
+`init` writes [the coding agent navigation protocol](protocol/navigation-protocol.md) into
 your documentation folder. That file teaches your coding agent to walk the
 corpus. **The protocol does the navigation work; the linter only checks that
 the structure holds**.
