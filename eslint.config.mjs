@@ -26,27 +26,47 @@ export default tseslint.config(
     },
     plugins: { jsdoc, tsdoc, ecr: ecrPlugin },
     rules: {
-      // -- 2.2: Explicit typing on all boundaries --
-      '@typescript-eslint/explicit-function-return-type': 'error',
+      // -- TypeScript Engineering Standard -- "Be Explicit at Important Boundaries" --
+      //
+      // Explicit at boundaries, inference internally. Module boundaries carry
+      // the contract, so they are enforced; inside an implementation the
+      // standard prefers a clear inferred type to a restated one.
+      //
+      // no-inferrable-types stays off because src/ still carries explicit
+      // annotations on local variables from an earlier rule. Turning it on
+      // would demand a repository-wide sweep to remove them, which is exactly
+      // the unrelated normalization the contract prohibits. They are left to
+      // disappear as the surrounding code is touched.
       '@typescript-eslint/explicit-module-boundary-types': 'error',
-      '@typescript-eslint/typedef': ['error', {
-        variableDeclaration: true,
-        variableDeclarationIgnoreFunction: false,
-      }],
       '@typescript-eslint/no-inferrable-types': 'off',
 
-      // -- 3.4: Explicit access modifiers --
-      '@typescript-eslint/explicit-member-accessibility': 'error',
-
-      // -- 2.4: Named types for object shapes --
+      // -- TypeScript Engineering Standard -- "Use Types to Model the Domain" --
+      //
+      // Enforced across src/ rather than scoped to a list of public modules:
+      // every module in src/ except cli.ts contributes declarations that
+      // index.ts re-exports, so a narrower file scope would be the same set
+      // of files with a maintenance burden attached.
       'ecr/no-inline-object-types': 'error',
 
-      // -- 2.1: Readability --
+      // -- Repository convention; the standard is silent on it --
+      //
+      // Used consistently in every class-bearing module. Kept because it is an
+      // established convention the standard does not contradict, not because
+      // the standard requires it.
+      '@typescript-eslint/explicit-member-accessibility': 'error',
+
+      // -- TypeScript Engineering Standard -- "Naming and Readability" --
       'no-nested-ternary': 'error',
       'arrow-body-style': ['error', 'as-needed'],
 
-      // -- 4.2: TSDoc --
+      // -- TypeScript Engineering Standard -- "Documentation" --
+      //
+      // publicOnly restricts the requirement to exported declarations, which
+      // is the published API this package ships .d.ts for. Documentation on
+      // an internal helper is welcome where it adds information, but it is
+      // not required merely because the declaration exists.
       'jsdoc/require-jsdoc': ['error', {
+        publicOnly: true,
         require: {
           FunctionDeclaration: true,
           MethodDefinition: true,
@@ -74,9 +94,7 @@ export default tseslint.config(
     files: ['tests/**/*.ts'],
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
-      '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
-      '@typescript-eslint/typedef': 'off',
       '@typescript-eslint/array-type': 'off',
       '@typescript-eslint/no-unnecessary-type-assertion': 'off',
       '@typescript-eslint/non-nullable-type-assertion-style': 'off',
