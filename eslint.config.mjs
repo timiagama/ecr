@@ -26,7 +26,7 @@ export default tseslint.config(
     },
     plugins: { jsdoc, tsdoc, ecr: ecrPlugin },
     rules: {
-      // -- TypeScript Engineering Standard -- "Be Explicit at Important Boundaries" --
+      // -- per 0.1#4.2 - Be Explicit at Important Boundaries --
       //
       // Explicit at boundaries, inference internally. Module boundaries carry
       // the contract, so they are enforced; inside an implementation the
@@ -40,7 +40,7 @@ export default tseslint.config(
       '@typescript-eslint/explicit-module-boundary-types': 'error',
       '@typescript-eslint/no-inferrable-types': 'off',
 
-      // -- TypeScript Engineering Standard -- "Use Types to Model the Domain" --
+      // -- per 0.1#4.1 - Use Types to Model the Domain --
       //
       // Enforced across src/ rather than scoped to a list of public modules:
       // every module in src/ except cli.ts contributes declarations that
@@ -55,11 +55,11 @@ export default tseslint.config(
       // the standard requires it.
       '@typescript-eslint/explicit-member-accessibility': 'error',
 
-      // -- TypeScript Engineering Standard -- "Naming and Readability" --
+      // -- per 0.1#9 - Naming and Readability --
       'no-nested-ternary': 'error',
       'arrow-body-style': ['error', 'as-needed'],
 
-      // -- TypeScript Engineering Standard -- "Documentation" --
+      // -- per 0.1#10 - Documentation --
       //
       // publicOnly restricts the requirement to exported declarations, which
       // is the published API this package ships .d.ts for. Documentation on

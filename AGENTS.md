@@ -9,30 +9,77 @@ project.
 
 ## Governing documents
 
-For TypeScript work, read and follow:
+`docs/engineering/` is an ECR corpus. Its documents are addressed by DocID, and
+this file cites them by address rather than repeating them:
 
-* `docs/engineering/typescript-engineering-standard.md` — the properties the
-  code must have.
-* `docs/engineering/typescript-coding-agent-contract.md` — how to operate while
-  changing the repository.
+* **0.1** — TypeScript Engineering Standard: the properties the code must have.
+* **0.2** — TypeScript Coding-Agent Contract: how to operate while changing the
+  repository.
+* **0.3** — ECR Navigation Protocol: how to resolve these addresses.
 
 Those documents are authoritative. Do not restate or reinterpret their rules
 here.
 
-## Critical constraints — summary only
+`see` and `per` are interchangeable in ECR; the obligation comes from the
+direction label in a References section, not from the keyword. This file uses
+`per` for constraints it expects you to honour and `see` for navigation. That
+is a local readability convention, not ECR semantics.
 
-A reminder index, not a source of rules. Each line names a section of a
-governing document; that section is what binds.
+## Critical constraints
 
-* **Do Not Manufacture Success** (contract) — resolve failures at their cause.
-* **Preserve Behavioural Protection** (standard) — a change must not reduce the
-  suite's protection of existing supported behaviour.
-* **Preserve Type Safety** (standard) — contain an escape hatch at the boundary
-  that forces it; prefer mechanisms that expire when it is no longer needed.
-* **Make the Smallest Coherent Change** (contract) — complete, but no wider than
-  the task.
-* **Verify the Change** (contract) — run the gates below, and claim only what
-  was actually run.
+Summary only; the authoritative text is at the address given. These are the
+constraints whose violation is least self-correcting — retain them even if you
+resolve nothing.
+
+* Do not manufacture success — resolve failures at their cause, per 0.2#6
+* Preserve behavioural protection — a change must not reduce the suite's
+  protection of existing behaviour, per 0.1#3.4
+* Preserve type safety — contain an escape hatch at the boundary that forces
+  it, per 0.1#3.1
+* Make the smallest coherent change — complete, but no wider than the task,
+  per 0.2#4
+* Run the repository's verification gates — and claim only what was actually
+  run, per 0.2#7
+
+## Engineering guidance index
+
+Navigational, not normative. Resolve only what the task calls for.
+
+TypeScript Engineering Standard
+
+* Core principles — see 0.1#2
+* Type safety — see 0.1#3.1
+* Runtime boundaries — see 0.1#3.2
+* Type design — see 0.1#4
+* Dependencies — see 0.1#6
+* Errors and outcomes — see 0.1#7
+* Async and resources — see 0.1#8
+* Naming and readability — see 0.1#9
+* Documentation — see 0.1#10
+* Testing — see 0.1#11
+
+Coding-Agent Contract
+
+* Understand before changing — see 0.2#2
+* Preserve existing intent — see 0.2#3
+* Change scope — see 0.2#4
+* Existing solutions — see 0.2#5
+* Do not manufacture success — see 0.2#6
+* Verification — see 0.2#7
+
+## Navigating the corpus
+
+An address such as `0.1#3.1` is an identity, not a position. Resolve it by
+searching `docs/engineering/` for a heading that begins with it, and read that
+section rather than the whole document.
+
+Before materially changing a section, search for its address to find what
+depends on it. `eslint.config.mjs` cites sections of the standard, and this
+file cites all three documents.
+
+The full protocol is document 0.3: structure and identifiers, see 0.3#1;
+finding and reverse lookup, see 0.3#2; reference obligations, see 0.3#3;
+grounding, see 0.3#4; gotchas, see 0.3#5.
 
 ## Verification
 
@@ -45,13 +92,14 @@ npm run lint
 npm test
 npm run build
 node dist/bin.js lint spec
+node dist/bin.js lint docs/engineering
 node dist/bin.js lint --example
 ```
 
-The two corpus checks need `npm run build` to have run first, because they
+The three corpus checks need `npm run build` to have run first, because they
 execute the built binary.
 
-CI runs the first five on Linux and Windows against Node 22 and 24. The example
+CI runs the first six on Linux and Windows against Node 22 and 24. The example
 corpus is covered separately, by a job that installs the packed tarball into a
 fresh project and runs the binary through `node_modules/.bin`. That job exists
 because an entry point reached through a symlink can silently exit 0 without
@@ -89,8 +137,8 @@ deliberate, not oversights.
 
 Do not replace them with third-party packages, and do not add a runtime
 dependency, unless the task is specifically to reconsider that decision. This
-specializes the standard's "Prefer Proven Implementations Over Bespoke Commodity
-Code", which is otherwise correct and still applies to genuinely new
+specializes per 0.1#6.1, Prefer Proven Implementations Over Bespoke Commodity
+Code, which is otherwise correct and still applies to genuinely new
 general-purpose functionality.
 
 ### Module format
@@ -142,6 +190,18 @@ Development is pinned to Node 22 (`.nvmrc`); `engines` is deliberately open at
 `~6.0.3`: typescript-eslint supports `<6.1.0`, and npm's `latest` is TypeScript
 7. Do not upgrade either without being asked.
 
+### The shipped navigation protocol is generated
+
+`protocol/navigation-protocol.md` is a build artifact. Edit
+`docs/engineering/navigation-protocol.md` and run `npm run generate:protocol`;
+the build does this too. The shipped copy has this repository's ECR identity
+removed, because `ecr init` writes it verbatim into a user's corpus where a
+DocID of ours would mean nothing.
+
+The artifact is committed rather than ignored so that the test suite and
+`npm pack` work without a prior build. A test asserts it is the current output
+of generation.
+
 ### Patterns in existing code that are not requirements
 
 Both governing documents say a repeated pattern is not necessarily an
@@ -150,8 +210,7 @@ intentional convention. Two specific cases in this repository:
 * **Explicit annotations on local variables.** `const hasErrors: boolean = …`
   appears throughout `src/` as residue of a `typedef` lint rule that has been
   removed. Do not propagate it for consistency. Prefer inference for internal
-  values when the inferred type is clear, as "Be Explicit at Important
-  Boundaries" requires.
+  values when the inferred type is clear, per 0.1#4.2.
 * **TSDoc on internal members.** Documentation blocks on private methods are
   residue of a blanket documentation rule now scoped to the published API.
   Documenting an internal helper is welcome where it adds information, but it is

@@ -46,6 +46,11 @@ jobs:
       # path-separator conventions.
       - run: node dist/bin.js lint spec
 
+      # The engineering standards are an ECR corpus that AGENTS.md and
+      # eslint.config.mjs cite by address. If it stops validating, those
+      # addresses stop meaning anything.
+      - run: node dist/bin.js lint docs/engineering
+
   package:
     # Installs the packed tarball the way a user would and runs the binary
     # through node_modules/.bin. On Linux that entry is a symlink, which is
