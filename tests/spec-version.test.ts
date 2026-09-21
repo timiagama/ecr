@@ -34,7 +34,7 @@ describe('Feature: The implemented specification version is stated consistently'
   });
 
   it('matches the version line in the specification document', () => {
-    const specification: string = readRepositoryFile('spec/ecr-specification.md');
+    const specification: string = readRepositoryFile('spec/v2/1 - ECR - Structural Specification.md');
     const match: RegExpExecArray | null = /^\*\*Version:\*\* (\S+)$/m.exec(specification);
 
     expect(match, 'the specification must carry a "**Version:** x.y.z" line').not.toBeNull();

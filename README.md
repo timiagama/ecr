@@ -373,10 +373,12 @@ procedures, or other documents where traceable references matter.
 This repository contains the ECR 1.0.0 specification and `@timiagama/ecr`, a
 linter that implements it.
 
-- [Specification](spec/ecr-specification.md) — the formal grammar and rules
-- [User guide](spec/ecr-user-guide.md) — writing ECR-compliant documents
-- [Design rationale](spec/design-rationale-section-separator.md) — why
-  identifiers carry a `#`
+- [Specification](<spec/v2/1 - ECR - Structural Specification.md>) — the formal
+  grammar and rules
+- [User guide](<spec/v2/2 - ECR - User Guide.md>) — writing ECR-compliant
+  documents
+- [Design rationale](<spec/v2/3 - Design Rationale - The Section Separator.md>)
+  — why identifiers carry a `#`
 - [Navigation protocol](protocol/navigation-protocol.md) — the instructions
   you give your coding agent
 

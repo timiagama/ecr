@@ -91,7 +91,7 @@ npm run typecheck
 npm run lint
 npm test
 npm run build
-node dist/bin.js lint spec
+node dist/bin.js lint spec/v2
 node dist/bin.js lint docs/engineering
 node dist/bin.js lint --example
 ```
@@ -161,7 +161,7 @@ that; do not collapse the two.
 
 ### Diagnostic severity is defined by the specification
 
-`spec/ecr-specification.md` section `1#12` fixes which findings are errors,
+`spec/v2/1 - ECR - Structural Specification.md` section `1#12` fixes which findings are errors,
 which are warnings and which are informational: structural and referential
 breakage is always an error, while advisory findings — a stale References title,
 an undeclared prose-looking DocID target, a wrapped reference, an empty

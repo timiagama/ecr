@@ -44,7 +44,7 @@ jobs:
       # breaks a reference must fail the build, not be caught by hand later.
       # Running it on every matrix leg also exercises the corpus walk on both
       # path-separator conventions.
-      - run: node dist/bin.js lint spec
+      - run: node dist/bin.js lint spec/v2
 
       # The engineering standards are an ECR corpus that AGENTS.md and
       # eslint.config.mjs cite by address. If it stops validating, those
