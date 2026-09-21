@@ -99,7 +99,7 @@ section* to see exactly who leans on that spot.
 | Who references section `8.1#3` or below? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1#3\b" docs` |
 | Either the document or any section? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1(#[0-9.]*\|\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
 | Every section-precise reference in the corpus | `rg -n "\b([Ss]ee\|[Pp]er) [0-9.]+#" docs` |
-| References-section entries citing `8.1` | `rg -n "^\s*-\s*\[?8\.1[^0-9.#]" docs` |
+| References-section entries citing `8.1` | `rg -n "^\s*([-*+]|[0-9]+[.)])\s*\[?8\.1[^0-9.#]" docs` |
 
 The document-only pattern carries a trailing group because `\b` cannot terminate
 a dotted identifier: `.` and `#` are both non-word characters, so `8\.1\b`
@@ -118,7 +118,7 @@ similarity search cannot answer — a generic contract governing many specific
 documents that don't resemble it textually:
 
 ```bash
-rg -ln "^\s*-\s*\[?8\.1[^0-9.#].*\(authority" docs
+rg -ln "^\s*([-*+]|[0-9]+[.)])\s*\[?8\.1[^0-9.#].*\(authority" docs
 ```
 
 Swap `authority` for `constraint` / `contract` / `dependency` to pull the other

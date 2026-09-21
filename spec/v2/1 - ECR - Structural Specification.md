@@ -1,6 +1,6 @@
 # 1 - ECR - Structural Specification
 
-**Version:** 1.0.0
+**Version:** 2.0.0
 
 ## 1#1 - Purpose
 
@@ -173,7 +173,10 @@ ECR is formally specified to:
 - support multiple host integrations
     
 
-The grammar defines invariants over AST(M), not over raw Markdown text.
+The grammar defines invariants over AST(M). The single exception is the
+navigation guarantee of 1#9.11, which constrains the source form of the lines
+carrying identifiers, direction labels and the `References` heading, so that a
+text search finds what the parser found.
 
 ### 1#4.3 - Why AST Traversal Requires a Visitor Pattern
 
@@ -220,6 +223,27 @@ Every document begins with a numbered H1 heading:
 ```
 
 The number (`3.1`) is the document’s stable identity (DocID).
+
+**File names do not carry ECR identity.** Identity is the DocID in the H1.
+Renaming or moving a document changes nothing about the graph, and two corpora
+may name the same DocID differently without either being wrong. This repository
+names its documents `<DocID> - <Title>.md`, which helps a human find a file
+without opening it, but that is a local convention and a corpus that ignores it
+is no less compliant.
+
+Paths do, however, matter to **discovery**. A host decides which files to read
+and which to skip, and it may use names to do so: the bundled CLI excludes
+meta-documents such as `README.md`, `AGENTS.md` and `CHANGELOG.md` by name, and
+accepts ignore patterns over paths. One navigation recipe takes a file path
+directly, to read a known document's References section. Naming is therefore
+non-normative for identity and consequential for discovery, and the two should
+not be confused.
+
+**A corpus is whatever the linter is pointed at.** DocIDs must be unique within
+a corpus, not within a filesystem. This specification lives in `spec/v2/`
+precisely so that a future `spec/v3/` can reuse DocIDs `1`, `2` and `3` without
+collision: each version folder is validated as its own corpus, and linting a
+parent that contains both would correctly report duplicate identifiers.
 
 ---
 
@@ -268,16 +292,24 @@ Rules:
 
 ---
 
-### 1#6.4 - References Section (Mandatory)
+### 1#6.4 - References Section
 
-Every document MUST include:
+Every document MUST include the heading:
 
 ```
 ## References
 
 ```
 
-Followed immediately by a list of referenced documents.
+A document that references others follows it immediately with a list of them.
+
+A document that references nothing leaves the section empty. The heading is
+still required, because an empty References section is a statement — *this
+document depends on nothing* — and silence is not. A reader who finds no
+References section cannot tell a document with no dependencies from one whose
+author never recorded them; that distinction is the whole of *Explicit*
+Constraint Referencing. The linter reports an empty section as information, not
+as an error (1#9.6).
 
 Example:
 
@@ -423,9 +455,14 @@ State management is necessary to ensure deterministic evaluation and accurate ed
 Let `M` be a valid Markdown document.  
 Let `AST(M)` be its parsed Markdown **Abstract Syntax Tree (AST)**.
 
-ECR compliance is defined as a predicate over `AST(M)`.
+ECR compliance is defined as a predicate over `AST(M)`, together with the
+source-form constraints of 1#9.11.
 
-All validation operates on AST nodes, not raw text.
+Structural validation operates on AST nodes. The exception is the navigation
+guarantee: because ECR documents are navigated by searching raw file text, the
+rules in 1#9.11 constrain the source form of the lines that carry identifiers.
+Those rules are stated over the raw text of a node's source range, and are the
+only rules that are.
 
 ---
 
@@ -527,6 +564,10 @@ A heading that violates the depth-to-section-path rule is invalid.
 
 4. For a heading of depth `d ≥ 3`, the section path without its last segment MUST equal the section path of its parent — the nearest preceding heading of depth `d - 1`. `3.1#2.1` sits under `3.1#2`, never under `3.1#1`. This is what makes a SectionID self-locating: its number alone says where in the document it lives.
 
+5. The heading's source form MUST satisfy rule 1 of 1#9.11, so that the section
+   is discoverable by the published recipe. The title is unconstrained; only the
+   identifier's own characters are.
+
 A heading separates its identifier from its title with a dash:
 
 ```
@@ -570,7 +611,51 @@ TargetID ::= DocID | SectionID
 
 Rules:
 
-1. `TargetID` MUST be numeric and conform to grammar.
+1. `TargetID` MUST be numeric and conform to grammar, and MUST be recognised as
+   a **complete token** rather than as a prefix of the text that follows.
+
+   Recognition proceeds in three steps:
+
+   - **Candidate.** Starting at the first digit after the keyword, take the
+     maximal run of characters drawn from `0-9`, `.` and `#`. The candidate is
+     that entire run — never a shorter prefix of it.
+
+   - **Conformance.** The candidate MUST conform to the `DocID` or `SectionID`
+     grammar, and MUST be followed by whitespace, the end of the line, or one of
+     `, ; : ) ] } " ' ! ?`. A candidate that fails the grammar only because of a
+     single trailing `.` is accepted with that `.` removed, which is what makes
+     a citation at the end of a sentence valid.
+
+   - **Disposition.** A candidate that satisfies the previous step is a
+     reference. One that does not is judged by whether it contains a `#`:
+
+     - **With a `#`**, it is a *malformed reference*. No edge is extracted and
+       an ERROR is reported.
+
+     - **Without a `#`**, it is *ordinary prose*. No edge is extracted and no
+       diagnostic is reported.
+
+   Taking the whole run before testing it is what stops a malformed candidate
+   from decaying into a shorter valid one. `see 1#1oops` yields the candidate
+   `1#1`, which conforms but runs into a letter; `see 1#1#9` and `see 1#` yield
+   `1#1#9` and `1#`, which do not conform at all. All three contain a `#`, so
+   all three are errors, and none is quietly accepted as `1#1` or `1`.
+
+   The `#` decides the disposition because it is the one character of an ECR
+   identifier that ordinary writing never produces. Prose is full of numbers
+   that follow `see` and `per`: `per 60s`, `per 10ms`, `see 1..2` — a number
+   with a unit, or a range, from an author who intended no citation at all.
+   Reporting those would make the linter unusable on the technical prose ECR
+   exists to annotate, and rule 3 already reasons this way when it lets a bare
+   DocID warn rather than fail.
+
+   Prose stays prose even when the corpus contains a document whose DocID
+   matches its leading digits: `per 60s` is not a reference to document `60`,
+   and no edge is extracted for it.
+
+   Recognition of the keyword depends only on a word boundary before it, never
+   on the specific character that precedes it: `"see 3.1#2"` inside quotation
+   marks is a reference.
     
 2. The DocID of a `TargetID` is the `TargetID` itself if it is a DocID, or the text before the `#` if it is a SectionID (`X#Y`).
     
@@ -584,7 +669,13 @@ Rules:
         
     - Across a corpus, an undeclared DocID target that is a document in the corpus is an ERROR: it is a real reference whose declaration, and with it the direction and explanation of the edge, is missing. One that names no document remains a WARNING.
         
-4. The keyword and the `TargetID` MUST be adjacent plain text. Where inline formatting separates them — the `TargetID` begins a link, bold, italic or strikethrough span that directly follows the keyword, as in `see [8.1#3](…)` — the reference is invisible to a text search, so no edge is extracted and a WARNING is emitted.
+4. The keyword and the `TargetID` MUST be adjacent literal text on one source line, per rule 2 of 1#9.11. A citation fails this rule when the `TargetID` begins a link, bold, italic or strikethrough span (`see [8.1#3](…)`), when a line break separates it from the keyword, when it contains a backslash escape or character reference (`see 5\.1#1`), or when more than one space separates the two. In every such case the citation is invisible to a text search, so no edge is extracted.
+
+    The violation is classified by the same test as rule 3: whether the target is identifiable as a reference, or is indistinguishable from numeric prose.
+
+    It is an ERROR when the target is a SectionID (the `#` form never occurs in ordinary prose), when the target DocID is declared in the document's References section, when it is the document's own DocID, or when the corpus confirms that a document with that DocID exists. In each of those cases a citation was certainly intended, and it is certainly unfindable.
+
+    It is a WARNING only when the target is a bare DocID that names nothing known — undeclared, not the document's own, and absent from the corpus, or with no corpus available. There, emphasised prose (`See *8.1* for details`) cannot be distinguished from a citation whose author reached for italics.
     
 
 ---
@@ -598,6 +689,12 @@ References
 ```
 
 The entries are the items of the list node that immediately follows this heading.
+
+The heading and that list MUST both be children of the document root, per rule 3
+of 1#9.11. A References section nested inside a blockquote, a list item, or any
+other container is rejected: its entries would otherwise be silently discarded,
+and the declared relationships lost. Requiring a predictable top-level position
+is what makes the References section findable by a single anchored search.
 
 A References section with no list declares that the document has no external references. This is valid: the linter reports it as `info`, not as an error.
 
@@ -615,6 +712,31 @@ Where:
 TargetDocID ::= DocID
 Direction   ::= authority | dependency | constraint | contract
 ```
+
+The **relationship parenthetical** is located by matching, not by searching for
+the first or last `" ("`. The entry MUST end with `)`, and that `)` is matched to
+its opening `(` by scanning right to left, counting nesting depth. What precedes
+that `(` is `TargetDocID " - " Title`; what it encloses is
+`Direction " - " Explanation`.
+
+Parentheses MUST be balanced **within the relationship parenthetical**. In the
+`Title` they are unconstrained: a title may carry an unmatched `(` or `)`
+without consequence, because the parenthetical has already been delimited by the
+match above.
+
+Matching from the end is what lets an explanation hold parentheses of its own.
+In
+
+```
+- 8.1 - Target (dependency - defines retries (contract - policy))
+```
+
+the final `)` matches the `(` before `dependency`, so the direction is
+`dependency` and the explanation is `defines retries (contract - policy)` — not
+the `contract` edge that taking the last `" ("` would produce.
+
+An entry that does not end with `)`, or whose relationship parenthetical is
+unbalanced, is malformed.
 
 Rules:
 
@@ -731,6 +853,93 @@ The graph excludes:
 Although the linter extracts `title` fields for documents and sections, these are **metadata for display and diagnostics only**. They MUST NOT participate in node identity, edge identity, canonical ordering, or any equality comparison of graph structure.
 
 Graph identity MUST remain stable under edits to document titles, section heading text, and section content, provided DocIDs, SectionIDs, and references remain unchanged.
+
+---
+
+### 1#9.11 - Navigation Guarantee
+
+ECR documents are navigated by searching raw file text, using the recipes
+published in the navigation protocol that ships with this specification.
+
+**The guarantee.** In a corpus that passes validation, every document, every
+section, and every reference the linter recognises — whether declared in a
+References section or written inline — MUST be discoverable by the
+corresponding recipe, applied to the raw bytes of the source files.
+
+Parsing and searching disagree in two ways. A Markdown parser discards syntax
+that a search still sees: emphasis markers are removed and backslash escapes
+resolved, so `**8.1**` and `8\.1` both parse to `8.1` while the source still
+holds the asterisks and the backslash. The escaped form does not contain the
+characters `8.1` at all; the emphasised form does, but neither satisfies a
+recipe, which anchors an identifier to a heading's `#` characters or to the
+keyword before it. And a parser joins what a search keeps apart: a soft
+line break is preserved in the text it produces, and the reference matcher
+treats that newline as ordinary whitespace, whereas a line-anchored search
+cannot match across two lines at all.
+
+Validation defined solely over the parsed tree would therefore accept documents
+that no recipe can find, and the guarantee above would be false. The rules below
+constrain the source form of the text that carries identifiers, direction
+labels, and the `References` heading itself, so that the parsed meaning and the
+searchable text agree.
+
+Formatting is constrained only where the recipes look. Prose is unaffected, and
+so is every heading's title: `## 8.1#3 - **Retry** policy` is valid, because no
+recipe reads the title.
+
+1. **Heading source form.** A heading that carries a `DocID` or `SectionID`
+   MUST be an ATX heading whose source line begins at column 1 with its opening
+   `#` characters, followed by exactly one space (U+0020), followed by the
+   identifier in literal characters.
+
+   Within the identifier, inline formatting, backslash escapes and character
+   references MUST NOT appear. A setext heading MUST NOT carry an identifier.
+
+2. **Citation source form.** In an inline reference, the keyword and the
+   `TargetID` MUST appear on the same source line, separated by exactly one
+   space (U+0020), with the `TargetID` in literal characters.
+
+3. **References placement.** The `## References` heading and the list that
+   follows it MUST both be children of the document root. Neither may be nested
+   inside a blockquote, a list item, or any other container node.
+
+4. **References source form.** The recipes read the References section itself,
+   not only the identifiers inside it, so its source form is constrained in
+   four places:
+
+   - The heading's source line MUST be `## References` exactly: two `#`
+     characters at column 1, one space (U+0020), and the word `References` in
+     literal characters. `## **References**` is rejected.
+
+   - The entry's target `DocID` MUST appear in literal characters, at the start
+     of the entry text, optionally preceded by a single `[`.
+
+   - The list marker, the target `DocID` and the direction label MUST all appear
+     on **one source line**, in that order, with the direction label in literal
+     characters immediately after the opening parenthesis of the parenthetical.
+     The explanation that follows the label may wrap over as many lines as it
+     needs. The recipe answering "which documents does `8.1` govern?" matches
+     the marker, the identifier and the label in a single line-anchored pattern,
+     and finds nothing when any of the three is on a line of its own.
+
+     Together with rule 2, which keeps a citation's keyword and identifier on
+     one line, these are the only rules in this specification that constrain
+     where a source line may break. Markdown renders a single newline as the
+     same line, so a rule of this kind must earn its place: each is confined to
+     adjacent fields that an author would have to work to separate, and the
+     alternative — multi-line search in every query — would make the recipes
+     markedly harder for the agents that run them.
+
+The list marker itself is not constrained beyond sharing that line. A `-`, `*`
+or `+` bullet and an ordered `1.` or `1)` marker are all equally navigable, and
+the recipes match all five; rejecting a variant that is perfectly findable would
+repeat a restriction this specification already declines to make for the dash
+separator in 1#9.4.
+
+The single space required by rules 1, 2 and 4 is not arbitrary strictness: the
+published recipes match exactly one space, so two would not be found.
+
+Violations are classified per 1#12.
 
 ---
 
@@ -1067,6 +1276,16 @@ Emit corpus-wide diagnostics. Corpus-wide failures are errors; a title mismatch 
     
 - an inline reference to a SectionID (`X#Y`) whose DocID `X` is not declared in References
     
+- a heading whose identifier is not in the source form required by 1#9.11 rule 1 — indented, setext, separated from the hashes by a tab or more than one space, or carrying formatting or escapes inside the identifier itself
+    
+- a References heading or list that is not a child of the document root (1#9.11 rule 3)
+    
+- a References section whose source form defeats the recipes: a formatted `## References` heading, a target DocID that is not literal text at the start of the entry, or a direction label that is not literal text on the same line as the identifier (1#9.11 rule 4)
+    
+- a malformed inline reference: a candidate containing `#` that is not a complete, conforming token, such as `see 1#1#9`, `see 1#` or `see 1#1oops`. A candidate that fails the same test but contains no `#` is ordinary prose and is not reported at all. A candidate that passes the test is a reference whatever its form, so a conforming `see 8.1` is governed by the rules above and below, not by this exemption (1#9.5 rule 1)
+    
+- an inline reference whose keyword and identifier are not adjacent literal text on one line, where the target is identifiable — a SectionID, a declared DocID, the document's own DocID, or a DocID the corpus confirms (1#9.11 rule 2)
+    
 
 ### 1#12.2 - Referential Integrity Errors (Always ERROR)
 
@@ -1087,7 +1306,7 @@ Emit corpus-wide diagnostics. Corpus-wide failures are errors; a title mismatch 
     
 - an inline `see`/`per` DocID target (no `#`) that is not declared, where no such document exists in the corpus or no corpus is available (WARNING)
     
-- an inline reference whose identifier is wrapped in a link or formatting (WARNING)
+- an inline reference to a bare DocID whose keyword and identifier are not adjacent literal text on one line — wrapped in a link or formatting, escaped, line-broken, or multiply spaced — where that DocID is undeclared, is not the document's own, and names no document in the corpus (WARNING; when the target is identifiable by any of those tests the same violation is an ERROR per 1#12.1, because only an unidentifiable bare number can be ordinary prose)
     
 - a References section with no entries (INFO)
     
@@ -1141,18 +1360,55 @@ The bundled `ecr` CLI is such a host environment. It performs file enumeration a
 
 ## 1#14 - Versioning
 
-This document defines **ECR**.
+This document defines **ECR**. It is versioned independently of any
+implementation: `@timiagama/ecr` states which specification version it
+implements, and the two version numbers move separately.
 
-Future versions may extend:
+The specification uses semantic versioning, interpreted as follows. The contract
+is *which documents are conformant*, so compatibility is judged by what happens
+to a corpus that passes today:
 
-- direction labels
-    
-- validation rules
-    
-- structural constraints
-    
+- A **major** version may narrow what is conformant. A corpus valid under the
+  previous major version may fail under the new one, and the new version must
+  say which forms stopped being accepted and why.
 
-Any backward compatibility expectations must be documented per version.
+- A **minor** version may widen what is conformant, or add optional structure.
+  Every corpus valid under the previous minor version remains valid.
+
+- A **patch** version changes wording only: clarifications, examples, corrected
+  prose. The set of conformant documents is unchanged.
+
+Diagnostic severity is part of the contract, not an implementation detail.
+Raising a finding to `error` narrows conformance and requires a major version;
+lowering one does not.
+
+### 1#14.1 - Version history
+
+**2.0.0** — the first published specification. Adds the navigation guarantee
+(1#9.11) and the complete-token rule for inline targets (1#9.5), and makes
+explicit the severity model of 1#12.
+
+This is a major version because it narrows conformance. Documents that were
+valid under 1.0.0 fail under 2.0.0 when they carry an identifier a text search
+cannot find: an identifier wrapped in formatting or containing a backslash
+escape, a setext or indented heading, a heading or citation whose spacing
+departs from a single space, a citation split across a line break, a References
+section nested in a container, or a References entry whose marker, identifier
+and direction label do not share a line. It also rejects malformed section
+targets — `see 1#1#9`, `see 1#`, `see 1#1oops` — which 1.0.0 silently truncated
+to a shorter identifier that happened to exist.
+
+In the other direction, 2.0.0 ignores numeric prose that carries no `#`, such as
+`per 60s` or `see 1..2`. Under 1.0.0 such prose was truncated to its leading
+digits and treated as a citation, with an outcome that depended on the rest of
+the corpus: a warning where no such document existed, a corpus error where one
+existed but was undeclared, and a silent spurious edge where one existed and was
+declared. This does not narrow conformance — no document that passed now fails —
+but it does change what is extracted, and it removes edges that were never
+intended.
+
+**1.0.0** — the original specification. Written for a different architecture, in
+which a constraint graph engine consumed the linter's output; never published.
 
 ---
 

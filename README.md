@@ -370,7 +370,7 @@ procedures, or other documents where traceable references matter.
 
 ## Documentation
 
-This repository contains the ECR 1.0.0 specification and `@timiagama/ecr`, a
+This repository contains the ECR 2.0.0 specification and `@timiagama/ecr`, a
 linter that implements it.
 
 - [Specification](<spec/v2/1 - ECR - Structural Specification.md>) — the formal

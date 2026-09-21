@@ -164,8 +164,14 @@ that; do not collapse the two.
 `spec/v2/1 - ECR - Structural Specification.md` section `1#12` fixes which findings are errors,
 which are warnings and which are informational: structural and referential
 breakage is always an error, while advisory findings — a stale References title,
-an undeclared prose-looking DocID target, a wrapped reference, an empty
-References section — never fail validation.
+an undeclared prose-looking DocID target, an empty References section — never
+fail validation.
+
+A reference whose identifier is wrapped, escaped, line-broken or multiply spaced
+is not advisory by default: it is an error whenever the target is identifiable
+(a SectionID, a declared DocID, the document's own DocID, or one the corpus
+confirms), and a warning only when the target is a bare number naming nothing
+known.
 
 Severity is part of the specified contract. Do not change a diagnostic's
 severity as an implementation decision; that requires a specification change.

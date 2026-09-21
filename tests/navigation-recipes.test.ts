@@ -224,7 +224,7 @@ const LOCATING_RECIPES: readonly LocatingRecipe[] = [
   },
   {
     purpose: 'References-section entries citing 8.1',
-    pattern: '^\\s*-\\s*\\[?8\\.1[^0-9.#]',
+    pattern: '^\\s*([-*+]|[0-9]+[.)])\\s*\\[?8\\.1[^0-9.#]',
     expectedHits: [
       '0. Orientation/0.0 - System Overview.md:34',
       '3. Ingestion/3.1 - Ingestion - Validation Rules.md:33',
@@ -236,7 +236,7 @@ const LOCATING_RECIPES: readonly LocatingRecipe[] = [
   },
   {
     purpose: 'Find everything a document governs',
-    pattern: '^\\s*-\\s*\\[?8\\.1[^0-9.#].*\\(authority',
+    pattern: '^\\s*([-*+]|[0-9]+[.)])\\s*\\[?8\\.1[^0-9.#].*\\(authority',
     expectedHits: [
       '0. Orientation/0.0 - System Overview.md:34',
       '4. Payments/4.2 - Payment Processing Contract.md:33',

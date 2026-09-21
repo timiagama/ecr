@@ -16,4 +16,4 @@
 /**
  * The ECR specification version implemented by this package.
  */
-export const ECR_SPEC_VERSION: string = '1.0.0';
+export const ECR_SPEC_VERSION: string = '2.0.0';

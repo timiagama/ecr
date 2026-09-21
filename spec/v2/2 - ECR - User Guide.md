@@ -176,7 +176,7 @@ Rules:
     
 - It must appear exactly once.
     
-- It must be followed immediately by a list.
+- If the document references anything, it must be followed immediately by a list. A document that references nothing leaves the section empty — the heading is still required, because an empty section states that there are no dependencies, and silence states nothing.
     
 - Each entry must follow this structure:
     
@@ -565,7 +565,13 @@ Retries are bounded, see [8.1#3.2](8.1-orchestration.md).
 Retries are bounded per **8.1#3.2**.
 ```
 
-The brackets or asterisks between the keyword and the identifier mean a search for `see 8.1#3.2` no longer finds the reference, so neither an agent nor the linter can follow it. The linter warns when it sees this.
+The brackets or asterisks between the keyword and the identifier mean a search for `see 8.1#3.2` no longer finds the reference, so neither an agent nor the linter can follow it.
+
+The linter reports this as an **error** whenever it can tell that a reference was meant: when the target is a SectionID, as both examples above are, because the `#` form never appears in ordinary prose; and when the target is a bare DocID that the References section declares, that is the document's own DocID, or that the corpus confirms is a real document.
+
+It **warns** only when the target is a bare number naming nothing known — undeclared, not your own, and absent from the corpus. There, `See *8.1* for details` cannot be told from a citation whose author reached for italics, so the linter says so rather than failing you.
+
+The same applies to a line break between the keyword and the identifier, to a backslash escape inside it (`see 5\.1#1`), and to more than one space between the two. Each survives Markdown rendering and each defeats the search.
 
 Correct:
 
