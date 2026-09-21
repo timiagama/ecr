@@ -41,7 +41,7 @@ Those concerns belong to consuming systems (see 2#9).
 Explicit Constraint Referencing (ECR) is a structural convention for writing Markdown documentation so that constraint relationships between documents are explicit and machine-traversable.
 
 ECR does not introduce a new markup language.  
-It standardizes how existing Markdown is written so that interdependent constraints can be composed into a **Constraint Graph** and made legible to agentic systems.
+It standardizes how existing Markdown is written so that interdependent constraints become an explicit graph, one a coding agent can traverse with ordinary text search.
 
 This document defines the user-facing rules of ECR (see 1).
 
@@ -247,9 +247,9 @@ When multiple documents are combined into a corpus:
 
 Unresolved references invalidate ECR compliance.
 
-Corpus-wide validation ensures that constraint relationships are globally resolvable, structurally consistent, and free from identifier ambiguity. This enables deterministic graph construction and eliminates undocumented cross-document dependencies.
+Corpus-wide validation ensures that constraint relationships are globally resolvable, structurally consistent, and free from identifier ambiguity. This makes traversal deterministic and eliminates undocumented cross-document dependencies.
 
-A downstream Constraint Graph implementation MUST:
+Any tool built on the extracted artefacts MUST:
 
 - Treat validated structural artefacts as authoritative.
     
@@ -279,7 +279,7 @@ ECR does not:
 
 ECR defines structure only.
 
-Semantic interpretation belongs to constraint graph engines and higher-level systems.
+Semantic interpretation belongs to whoever reads the documents.
 
 ---
 
@@ -315,11 +315,11 @@ already has.
 The linter is optional. It checks that a corpus holds to the rules and extracts
 structural artefacts; it is not needed to read a corpus, only to validate one.
 
-Larger corpora may warrant a constraint graph engine that ingests those
-artefacts and answers questions `grep` becomes slow at: transitive closure,
-cycle detection, and precomputed reverse edges. Such an engine is a scale
-optimisation, not a prerequisite. Adopt it when corpus size makes repeated
-full-corpus scans painful, not before.
+At a large enough corpus size, repeated full-corpus scans get slow, and a few
+questions — transitive closure, cycle detection — are awkward to express as
+searches at all. Nothing stops you precomputing them from the extracted
+artefacts if you ever need to. That is a scale optimisation, not part of the
+convention, and not something to build before the scans actually hurt.
 
 Whatever consumes the corpus, the following hold:
 
@@ -826,7 +826,7 @@ For software teams building agentic systems, this transforms documentation from 
 
 ECR works because it removes ambiguity.
 
-If constraint relationships are not written in the exact, structured form ECR defines, they cannot be reliably composed into a Constraint Graph.
+If constraint relationships are not written in the exact, structured form ECR defines, the searches that make the graph traversable will not find them.
 
 ECR is strict by design.
 

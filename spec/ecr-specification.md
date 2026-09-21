@@ -12,9 +12,14 @@ The linter exists to validate ECR-ready documents against ECR’s formal structu
 
 This implementation of ECR operates exclusively on Markdown documents.
 
-Once validated by the linter, the formally encoded ECR relationships within the corpus can be reliably composed into a **Constraint Graph**, making them legible to agentic systems.
+Once validated by the linter, the ECR relationships within a corpus form an
+explicit graph — one that a coding agent traverses directly, by searching the
+raw Markdown with ordinary text search. Nothing sits between the documents and
+the agent reading them: no server, no index, no embeddings.
 
-Constraint graph engines rely on this linter to provide that structural assurance.
+The linter exists to give that traversal its guarantee. In a corpus that passes,
+every identifier is unique and every reference resolves, so a search that finds
+nothing can be trusted to mean that nothing is there.
 
 The linter does not build graphs or perform file discovery. Its responsibilities are limited to:
 
@@ -24,13 +29,9 @@ The linter does not build graphs or perform file discovery. Its responsibilities
 	
 In other words, the linter provides the structural guarantees required for other systems to operate deterministically. It operates purely over `(uri, text)` inputs and produces structured diagnostics and extracted artefacts, where `uri` is an opaque, host-provided identifier for a document instance e.g.  `file:///.../docs/3.1-scenario-authoring.md`.
 
-Consumers of the linter are expected to include:
-
-- Language Server implementations
-
-- Obsidian plugins
-
-- Other host environments
+The linter is embedded by a **host**: any program that discovers documents,
+feeds them in, and decides what to do with the results. A host is expected to be
+a modest thing — a command-line tool, a CI job, an editor integration.
 
 The package also ships a command-line tool, `ecr`. The CLI is a host in the sense above: it performs the file discovery the linter does not, feeds each document to the linter, and reports the result with an exit code suitable for CI. The constraints this specification places on the linter — no IO, no file discovery, no CI concerns — apply to the library API, not to the CLI built on it.
 	
@@ -136,7 +137,8 @@ The linter is **not**:
     
 
 File discovery belongs to the host environment.  
-Graph construction belongs to constraint graph engines.  
+Traversing the graph belongs to whoever reads the corpus — an agent with a text
+search needs nothing built first.  
 CI integration belongs to downstream tooling.
 
 The bundled `ecr` CLI is one such host and one such piece of downstream tooling (see 1#1): it discovers files and returns CI exit codes so that the linter itself does not have to.
@@ -734,7 +736,7 @@ Graph identity MUST remain stable under edits to document titles, section headin
 
 ## 1#10 - Output Schema (Normative)
 
-This section defines the normative output schema produced by the linter. The schema mirrors the ECR formal structural specification and is designed to be host-agnostic across graph engines, Language Servers, and Obsidian tooling.
+This section defines the normative output schema produced by the linter. The schema mirrors the ECR formal structural specification and is host-agnostic: it reports what the linter found and assumes nothing about what the host does next.
 
 ### 1#10.0 - URI Semantics (Normative)
 
@@ -862,7 +864,7 @@ Constraints:
     
 - `inlineReferences` are extracted only from valid inline forms: `see TargetID` and `per TargetID`.
     
-`title` is extracted for human/agent display and diagnostics. It is not part of ECR identity. Consumers (e.g. a constraint graph engine) may persist `title` as a metadata sidecar and MUST treat graph structure as independent of title text.
+`title` is extracted for human/agent display and diagnostics. It is not part of ECR identity. Consumers may persist `title` as metadata and MUST treat graph structure as independent of title text.
 
 
 ---
