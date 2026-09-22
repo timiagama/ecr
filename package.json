@@ -53,13 +53,16 @@
     "prepublishOnly": "npm run build && npm test && npm run lint"
   },
   "dependencies": {
+    "decode-named-character-reference": "^1.3.0",
     "mdast-util-to-string": "^4.0.0",
+    "micromark-util-decode-numeric-character-reference": "^2.0.2",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/node": "^22.10.0",
+    "@vscode/ripgrep": "^1.18.0",
     "eslint": "^9.39.2",
     "eslint-plugin-jsdoc": "^62.5.5",
     "eslint-plugin-tsdoc": "^0.5.0",

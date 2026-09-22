@@ -1,0 +1,4 @@
+{
+  "//": "For editors. The root tsconfig.json includes only src, so an editor opening a test file fell back to an inferred project and reported false errors. This applies the same settings `npm run typecheck` and ESLint already use; both name their configs explicitly, so neither reads this file.",
+  "extends": "../tsconfig.eslint.json"
+}

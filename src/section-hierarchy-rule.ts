@@ -29,6 +29,8 @@ import type {
 } from './identifier-grammar.js';
 import { IdentifierGrammar } from './identifier-grammar.js';
 import type { HeadingNodeData } from './document-identity-rule.js';
+import { HEADING_SOURCE_FORM_CAUSE, HeadingSourceForm } from './heading-source-form.js';
+import type { HeadingObstruction } from './heading-source-form.js';
 
 // ---------------------------------------------------------------------------
 // Rule identifier constant
@@ -66,6 +68,12 @@ export interface SectionHierarchyRuleOptions {
    * prefix validation, segment counting, and separator validation.
    */
   readonly grammar: IdentifierGrammar;
+  /**
+   * The document's raw Markdown, for the heading source-form check of 1#9.11
+   * rule 1. When absent, as in unit tests that supply only parsed heading
+   * text, the check is skipped.
+   */
+  readonly sourceText?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +226,9 @@ export class SectionHierarchyRule {
    */
   private readonly encounteredSectionIds: Set<SectionID>;
 
+  /** Checks each heading's source line against the section recipe. */
+  private readonly headingSourceForm: HeadingSourceForm;
+
   /**
    * Constructs a new Section Hierarchy Rule evaluator.
    *
@@ -228,6 +239,7 @@ export class SectionHierarchyRule {
     this.uri = options.uri;
     this.docId = options.docId;
     this.grammar = options.grammar;
+    this.headingSourceForm = new HeadingSourceForm(options.sourceText);
     this.collectedDiagnostics = [];
     this.collectedSections = [];
     this.headingStack = [];
@@ -319,6 +331,27 @@ export class SectionHierarchyRule {
     }
 
     const sectionId: SectionID = parseResult.sectionId;
+
+    // 3a. Verify the heading is where the section recipe looks (1#9.11 rule
+    // 1). Reported, but the checks below still run and the section is still
+    // extracted: withholding it would turn every citation of it into an
+    // unresolved target, reporting one mistake many times over.
+    const obstruction: HeadingObstruction | undefined = this.headingSourceForm.findObstruction(
+      range,
+      depth,
+      sectionId,
+    );
+
+    if (obstruction !== undefined) {
+      this.collectedDiagnostics.push({
+        ...this.createDiagnostic(
+          HeadingSourceForm.explain(obstruction, depth, sectionId),
+          range,
+          sectionId,
+        ),
+        data: { cause: HEADING_SOURCE_FORM_CAUSE, obstruction, sectionId },
+      });
+    }
 
     // 4. Verify SectionID extends DocID
     const extendsDocId: boolean = this.grammar.tellSectionIdExtendsDocId(

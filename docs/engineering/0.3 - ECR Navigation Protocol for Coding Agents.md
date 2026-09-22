@@ -94,23 +94,27 @@ section* to see exactly who leans on that spot.
 
 | Question | Pattern |
 |---|---|
-| Who references document `8.1`? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1(\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
-| Who references any section of `8.1`? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1#" docs` |
-| Who references section `8.1#3` or below? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1#3\b" docs` |
-| Either the document or any section? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1(#[0-9.]*\|\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
-| Every section-precise reference in the corpus | `rg -n "\b([Ss]ee\|[Pp]er) [0-9.]+#" docs` |
+| Who references document `8.1`? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1(\.[^0-9A-Za-z.#]\|\.$\|[^0-9A-Za-z.#]\|$)" docs` |
+| Who references any section of `8.1`? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1#" docs` |
+| Who references section `8.1#3` or below? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1#3([^0-9A-Za-z#]\|$)" docs` |
+| Either the document or any section? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1(#[0-9.]*\|\.[^0-9A-Za-z.#]\|\.$\|[^0-9A-Za-z.#]\|$)" docs` |
+| Every section-precise reference in the corpus | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) [0-9.]+#" docs` |
 | References-section entries citing `8.1` | `rg -n "^\s*([-*+]|[0-9]+[.)])\s*\[?8\.1[^0-9.#]" docs` |
 
-The document-only pattern carries a trailing group because `\b` cannot terminate
-a dotted identifier: `.` and `#` are both non-word characters, so `8\.1\b`
-matches inside `8.1.3`, `8.1#3` and `8.1.3#1`. The trailing group says what may
-follow a bare DocID, and the `\.[^0-9]` / `\.$` alternatives admit a
-sentence-ending full stop so that `see 8.1.` matches while `see 8.1.3` does not.
+These patterns bound a citation explicitly, because `\b` alone fails at both
+ends. It cannot terminate a dotted identifier: `.` and `#` are both non-word
+characters, so `8\.1\b` matches inside `8.1.3`, `8.1#3` and `8.1.3#1`. And `_`
+is a word character, so `\b` finds nothing before the keyword in `_see 8.1_`,
+which is ordinary Markdown emphasis. So the keyword follows `(\b|_)` — a word
+boundary or an underscore — and the identifier is followed by anything but an
+ASCII letter or digit. After a bare DocID, `#` is refused too, and so is `.`
+unless it ends a sentence (the `\.[^0-9A-Za-z.#]` / `\.$` alternatives), so that
+`see 8.1.` matches while `see 8.1.3` does not.
 
 Where ripgrep is built with PCRE2, `-P` allows the clearer form:
 
 ```bash
-rg -P -n "\b([Ss]ee|[Pp]er) 8\.1(?!#)(?![0-9])(?!\.[0-9])" docs
+rg -P -n "(?<![0-9A-Za-z])([Ss]ee|[Pp]er) 8\.1(?![0-9A-Za-z#])(?!\.[0-9A-Za-z.#])" docs
 ```
 
 **Find everything a document governs.** This is the high-value query that
@@ -200,6 +204,11 @@ For any implementation task:
 - **A bare number in prose is not an edge.** Only `see`/`per` inline references
   and `## References` entries are load-bearing. But opening a document is cheap —
   when unsure, look.
+- **Every reference is found, but not every hit is a reference.** In a corpus
+  that passes the linter, these patterns find every reference it recognises.
+  They can also match text it does not: `per 60**s**` reads as `per 60s`, which
+  is prose, yet the pattern for `60` matches it. Read the line before treating
+  a hit as an edge.
 - **Corpora drift.** A document may deviate from the convention. If a recipe
   returns nothing, loosen it — drop the anchor, search by title text — before
   concluding the target does not exist.

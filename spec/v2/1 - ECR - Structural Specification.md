@@ -656,6 +656,31 @@ Rules:
    Recognition of the keyword depends only on a word boundary before it, never
    on the specific character that precedes it: `"see 3.1#2"` inside quotation
    marks is a reference.
+
+   Recognition reads the text a reader sees on the line, not the text of one
+   parsed node. A Markdown text node ends wherever formatting begins, which is
+   not where a word or an identifier ends. So the whole citation, and the
+   characters either side of it, are read across the edges of formatting
+   spans: `per 60**s**` reads as `per 60s` and is prose, and `**x**see 8.1`
+   reads as `xsee 8.1` and has no keyword. A citation recognised across such
+   an edge — `see **8.1#3**`, `**see** 8.1#3`, `see <span>8.1#3</span>` — is
+   still a citation, and fails rule 4. Within that text:
+
+   - Emphasis, strong emphasis, strikethrough and link text contribute their
+     contents.
+
+   - Inline code contributes its contents. It may continue a candidate
+     (``per 60`s` `` is prose), but a keyword or candidate is never *recognised*
+     inside it, per the exclusions above. Code is text a reader sees, but not
+     text an author cites through.
+
+   - A hard line break, an image and a `br` tag end the text as whitespace
+     does. The tag may be in any case, and may carry attributes and a closing
+     `/`: `<br>`, `<BR/>` and `<br class="x">` are all breaks.
+
+   - Any other inline HTML — an HTML comment, or a tag such as `<span>` —
+     contributes nothing. It separates nothing a reader sees, so
+     `60<span>s</span>` and `60<!-- note -->s` both read as `60s`.
     
 2. The DocID of a `TargetID` is the `TargetID` itself if it is a DocID, or the text before the `#` if it is a SectionID (`X#Y`).
     
@@ -669,7 +694,7 @@ Rules:
         
     - Across a corpus, an undeclared DocID target that is a document in the corpus is an ERROR: it is a real reference whose declaration, and with it the direction and explanation of the edge, is missing. One that names no document remains a WARNING.
         
-4. The keyword and the `TargetID` MUST be adjacent literal text on one source line, per rule 2 of 1#9.11. A citation fails this rule when the `TargetID` begins a link, bold, italic or strikethrough span (`see [8.1#3](…)`), when a line break separates it from the keyword, when it contains a backslash escape or character reference (`see 5\.1#1`), or when more than one space separates the two. In every such case the citation is invisible to a text search, so no edge is extracted.
+4. The keyword and the `TargetID` MUST be adjacent literal text on one source line, per rule 2 of 1#9.11. A citation fails this rule when the `TargetID` begins a link, bold, italic or strikethrough span (`see [8.1#3](…)`), when any formatting, inline HTML or inline code falls between the keyword's first character and the identifier's last (`**see** 8.1#3`, `see <!-- x -->8.1#3`), when a line break separates it from the keyword, when it contains a backslash escape or character reference (`see 5\.1#1`), or when more than one space separates the two. In every such case the citation is invisible to a text search, so no edge is extracted.
 
     The violation is classified by the same test as rule 3: whether the target is identifiable as a reference, or is indistinguishable from numeric prose.
 
@@ -866,6 +891,21 @@ section, and every reference the linter recognises — whether declared in a
 References section or written inline — MUST be discoverable by the
 corresponding recipe, applied to the raw bytes of the source files.
 
+The guarantee runs one way. Every recognised reference is found, but not every
+search hit is a reference. The recipes read raw source, where markup can sit
+between a number and the unit that makes it prose: `per 60**s**` is prose under
+1#9.5, yet the recipe for document `60` matches it. Such hits are permitted. A
+recipe may be broader than the reference grammar; it may never be narrower.
+
+For the same reason, the recipes bound a citation explicitly rather than with a
+regular-expression word boundary alone. `_` is a word character to both
+published engines, so `\b` finds nothing in `_see 8.1_`, which is ordinary
+Markdown emphasis. Before the keyword the recipes accept a word boundary or an
+underscore. After the identifier they accept any character other than an ASCII
+letter or digit, and additionally refuse, after a bare `DocID`, a `#` and a `.`
+that does not end a sentence, so that `8.1` is not found inside `8.1#3` or
+`8.1.2`.
+
 Parsing and searching disagree in two ways. A Markdown parser discards syntax
 that a search still sees: emphasis markers are removed and backslash escapes
 resolved, so `**8.1**` and `8\.1` both parse to `8.1` while the source still
@@ -894,6 +934,15 @@ recipe reads the title.
 
    Within the identifier, inline formatting, backslash escapes and character
    references MUST NOT appear. A setext heading MUST NOT carry an identifier.
+
+   The line MUST also be a line to a search engine, which begins a line only
+   at the start of the file or after a line feed. A heading that follows a
+   lone carriage return (CR) is, to a search, the middle of the line before
+   it, even though Markdown starts a new line there; use LF or CRLF line
+   endings. And a heading on the first line MUST NOT be preceded by a UTF-8
+   byte-order mark, which GNU grep reads as text before the `#`. A mark on a
+   line of its own obstructs nothing, since the heading then begins a later
+   line.
 
 2. **Citation source form.** In an inline reference, the keyword and the
    `TargetID` MUST appear on the same source line, separated by exactly one

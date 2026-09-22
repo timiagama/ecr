@@ -44,9 +44,12 @@ import type {
   DiagnosticSeverity,
   InlineReferenceEdge,
   InlineReferenceKind,
+  Position,
   PositionRange,
 } from './types.js';
 import type { IdentifierGrammar } from './identifier-grammar.js';
+import { indexLineStarts } from './source-lines.js';
+import { alignParsedToSource } from './source-alignment.js';
 
 // ---------------------------------------------------------------------------
 // Rule identifier constant
@@ -85,6 +88,46 @@ export interface TextNodeData {
    * Optional; depends on whether the Markdown parser provides positional metadata.
    */
   readonly range?: PositionRange;
+}
+
+/**
+ * How a piece of an inline run takes part in recognition (1#9.5 rule 1).
+ *
+ * - `text`: a parsed text node. Keywords and candidates may be recognised in
+ *   it, and only text can be literal in the source.
+ * - `code`: inline code. It may continue a candidate, but neither a keyword
+ *   nor a candidate is ever recognised as starting inside it.
+ * - `break`: a hard break, an image, a `<br>` tag -- anything a reader sees
+ *   as separating the words either side. Its text is a single space.
+ */
+export type InlineSegmentKind = 'text' | 'code' | 'break';
+
+/**
+ * One piece of the text a reader sees in an inline run: a paragraph, or
+ * anything else whose children are inline content.
+ *
+ * A Markdown text node ends wherever formatting begins, which is not where a
+ * word or an identifier ends. Recognising citations one text node at a time
+ * therefore missed or misread every citation that crossed formatting:
+ * `per 60**s**` became a reference, and `see <span>8.1#3</span>` vanished
+ * without a diagnostic. The run is scanned as a whole instead, and each
+ * segment records where its characters came from.
+ *
+ * Inline HTML other than a line break is transparent, so it contributes no
+ * segment at all.
+ */
+export interface InlineSegment {
+  /** How the segment takes part in recognition. */
+  readonly kind: InlineSegmentKind;
+
+  /** The characters a reader sees. */
+  readonly text: string;
+
+  /** Position of the parsed text node, for a `text` segment. */
+  readonly range?: PositionRange;
+
+  /** MDAST types of the formatting spans enclosing it, outermost first. */
+  readonly wrappers: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +190,16 @@ export interface InlineReferenceRuleOptions {
    * a self-reference, an undeclared-reference diagnostic is emitted.
    */
   readonly declaredDocIds: ReadonlySet<DocID>;
+
+  /**
+   * The document's raw Markdown source.
+   *
+   * 1#9.11 is the one rule stated over source rather than over the parsed
+   * tree, because a search reads the file and the parser does not. A citation
+   * written `see 8\\.1#3` parses to `see 8.1#3` and is invisible to every
+   * recipe; only the source shows the difference.
+   */
+  readonly sourceText: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +231,85 @@ export const UNDECLARED_SECTION_TARGET_SEVERITY: DiagnosticSeverity = 'error';
  */
 export const UNDECLARED_TARGET_REASON: string = 'undeclared-target';
 
+/**
+ * The `data.cause` carried by a citation whose candidate is not a complete,
+ * conforming token and contains a `#` (1#9.5 rule 1).
+ */
+export const MALFORMED_TARGET_CAUSE: string = 'malformed-target';
+
+/**
+ * The `data.cause` carried by a citation whose keyword and identifier are not
+ * adjacent literal text on one source line (1#9.11 rule 2).
+ */
+export const CITATION_SOURCE_FORM_CAUSE: string = 'citation-source-form';
+
+/**
+ * Characters that may terminate a candidate identifier (1#9.5 rule 1).
+ *
+ * Whitespace, the end of the text, and sentence punctuation. A letter is
+ * deliberately absent: `see 1#1oops` never wrote an identifier at all.
+ */
+const PERMITTED_TERMINATOR_PUNCTUATION: ReadonlySet<string> = new Set([
+  ',', ';', ':', ')', ']', '}', '"', "'", '!', '?',
+]);
+
+/**
+ * Any whitespace, which may also terminate a candidate.
+ *
+ * Tested as a class rather than listed, so a non-breaking or em space ends an
+ * identifier as an ordinary space does. Listing only the ASCII four made
+ * `see 1#1` followed by a non-breaking space a malformed-target error, and
+ * silently dropped the edge for `see 1`.
+ */
+const WHITESPACE: RegExp = /\s/u;
+
+/**
+ * A word character, for deciding whether a keyword stands at a boundary.
+ *
+ * This is ripgrep's definition (Rust's `\w`), chosen after measuring both
+ * published engines against the same inputs. They do not agree:
+ *
+ *     preceding character        ripgrep   grep -E (C.UTF-8)
+ *     space, hyphen              match     match
+ *     e, e-acute, digit, _       no        no
+ *     combining acute (U+0301)   no        MATCH
+ *     connector (U+203F)         no        MATCH
+ *     supplementary (U+10400)    no        MATCH
+ *
+ * Where they differ, ripgrep is the stricter: it treats marks, connector
+ * punctuation and supplementary letters as word characters. The looser cases
+ * are simply not recognised as citations -- no edge, and no diagnostic,
+ * because text like `e\u0301see 1#1` is not a citation anyone wrote
+ * deliberately.
+ *
+ * The published recipes no longer use `\b` at all: they bound a citation by
+ * ERE recipes open with `(\b|_)`: ripgrep's `\b` is this same definition, so
+ * every keyword the linter recognises is found, and `_` is admitted so that
+ * `_see 8.1_` -- ordinary emphasis -- is found too. Measured against 46
+ * preceding characters in both engines, that form has no case where the
+ * linter recognises a keyword and either engine misses it. The PCRE recipe
+ * keeps an ASCII lookbehind instead, because PCRE's `\b` counts `\u00b2` and `\u00bd` as
+ * word characters and would miss them. Where an engine matches a keyword
+ * this set refuses, that is a permitted search hit, not an edge (1#9.11).
+ */
+const WORD_CHARACTER: RegExp = /[\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\p{Join_Control}]/u;
+
+/** Characters a candidate identifier may be built from. */
+const CANDIDATE_CHARACTERS: RegExp = /[0-9.#]/;
+
+/**
+ * Characters the published recipes refuse after a citation: an ASCII letter
+ * or digit. Anything else -- whitespace, punctuation, `_`, `*`, the `<` of a
+ * tag, the `&` of a character reference -- ends it.
+ */
+const RECIPE_EXCLUDED_BOUNDARY: RegExp = /[0-9A-Za-z]/;
+
+/** A character that ends a source line, which a recipe's `$` accepts. */
+const LINE_BREAK_CHARACTER: RegExp = /[\n\r]/;
+
+/** A `see`/`per` keyword at a word boundary, wherever it occurs. */
+const KEYWORD_PATTERN: RegExp = /([Ss]ee|[Pp]er)/g;
+
 // ---------------------------------------------------------------------------
 // Internal match type
 // ---------------------------------------------------------------------------
@@ -202,54 +334,42 @@ export interface DetectedInlineReference {
    * A DocID (`8.1`) or a SectionID (`8.1#3.2`).
    */
   readonly targetId: string;
+
+  /** The keyword exactly as written, preserving its capitalisation. */
+  readonly keyword: string;
+
+  /**
+   * The candidate run of identifier characters, before conformance is tested.
+   *
+   * Held separately from {@link targetId} because a candidate that fails is
+   * never shortened into one that passes: `1#1#9` does not become `1#1`.
+   */
+  readonly candidate: string;
+
+  /** Whether the candidate conforms, once a single trailing `.` is allowed for. */
+  readonly conforms: boolean;
+
+  /** The whitespace between the keyword and the candidate, exactly as written. */
+  readonly gap: string;
+
+  /**
+   * Offset of the keyword's first character within the parsed text node.
+   *
+   * This is what ties a citation to its own source characters. Every approach
+   * that tried to avoid carrying it -- searching for matching text, counting
+   * occurrences, comparing lists of targets -- could be defeated by another
+   * citation, or by raw text that merely resembled one.
+   */
+  readonly index: number;
 }
 
 // ---------------------------------------------------------------------------
-// Inline reference detection pattern (module-level)
+// Split citations (module-level)
 // ---------------------------------------------------------------------------
 
 /**
- * Regular expression for detecting inline `see`/`per` references in text.
- *
- * Matches the pattern: (word boundary)(see|per)(whitespace)(TargetID)
- *
- * Word boundary is defined as start of string, whitespace, or punctuation
- * such as `(`. The keyword's first letter may be capitalised. TargetID is
- * maximally matched as a DocID with an optional `#` and section path.
- *
- * A trailing period followed by a non-digit is treated as sentence
- * punctuation, not part of the TargetID. The regex handles this because
- * `\.\d+` requires a digit after the dot — a trailing dot with no
- * following digit is not captured.
- *
- * Capture groups:
- *   1 - The keyword (`See`, `see`, `Per`, `per`)
- *   2 - The TargetID: a DocID, optionally followed by `#` and a section path
- */
-const INLINE_REFERENCE_PATTERN: RegExp = /(?:^|[\s(])([Ss]ee|[Pp]er)\s+(\d+(?:\.\d+)*(?:#\d+(?:\.\d+)*)?)/g;
-
-// ---------------------------------------------------------------------------
-// Wrapped reference detection (module-level)
-// ---------------------------------------------------------------------------
-
-/**
- * Matches a `see`/`per` keyword at the very end of a text node, which is
- * where it sits when the identifier after it is wrapped in formatting.
- *
- * Group 1: the keyword.
- */
-const TRAILING_KEYWORD_PATTERN: RegExp = /(?:^|[\s(])([Ss]ee|[Pp]er)\s+$/;
-
-/**
- * Matches an identifier at the very start of a node's text.
- *
- * Group 1: the DocID or SectionID.
- */
-const LEADING_IDENTIFIER_PATTERN: RegExp = /^(\d+(?:\.\d+)*(?:#\d+(?:\.\d+)*)?)(?![\d#])/;
-
-/**
- * Inline Markdown formatting that can separate a keyword from its identifier,
- * with the words used to describe each in a diagnostic.
+ * Inline Markdown formatting that can split a citation, with the words used
+ * to describe each in a diagnostic.
  */
 const WRAPPER_DESCRIPTIONS: ReadonlyMap<string, string> = new Map([
   ['link', 'a link'],
@@ -260,9 +380,33 @@ const WRAPPER_DESCRIPTIONS: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
- * The `data.reason` carried by a wrapped-reference diagnostic.
+ * How a citation split by something other than formatting is described, by
+ * the kind of segment in the way. Where two text segments meet with nothing
+ * visible between them, only inline HTML can have separated them.
  */
-export const WRAPPED_REFERENCE_REASON: string = 'wrapped-reference';
+const SPLIT_DESCRIPTIONS: ReadonlyMap<string, string> = new Map([
+  ['code', 'inline code'],
+  ['break', 'a line break'],
+]);
+
+/** What separates inline text segments when no segment is in the way. */
+const TRANSPARENT_SPLIT_DESCRIPTION: string = 'inline HTML';
+
+/** A text segment's source, located and aligned on first use. */
+interface AlignedSegment {
+  /** The segment's raw source, when it could be located. */
+  readonly source: string | undefined;
+  /** Parsed-to-source offsets, when alignment succeeded. */
+  readonly offsets: readonly number[] | undefined;
+}
+
+/** What split a citation, as a diagnostic states it. */
+interface SplitDescription {
+  /** Phrase completing `"see 8.1#3" …`, such as `is split by bold text`. */
+  readonly because: string;
+  /** Data the diagnostic carries in addition, such as the wrapper's type. */
+  readonly extra?: Readonly<Record<string, unknown>>;
+}
 
 // ---------------------------------------------------------------------------
 // Rule class
@@ -340,6 +484,12 @@ export class InlineReferenceRule {
   /** Inline reference edges extracted from valid forms, in traversal order. */
   private readonly collectedInlineReferences: InlineReferenceEdge[];
 
+  /** The document's raw source, for the source-form checks of 1#9.11. */
+  private readonly sourceText: string;
+
+  /** Absolute offset at which each source line begins. */
+  private readonly lineStarts: readonly number[];
+
   /**
    * Constructs a new Inline Reference Rule evaluator.
    *
@@ -351,6 +501,8 @@ export class InlineReferenceRule {
     this.docId = options.docId;
     this.grammar = options.grammar;
     this.declaredDocIds = options.declaredDocIds;
+    this.sourceText = options.sourceText;
+    this.lineStarts = indexLineStarts(options.sourceText);
     this.collectedDiagnostics = [];
     this.collectedInlineReferences = [];
   }
@@ -379,114 +531,424 @@ export class InlineReferenceRule {
    *                         at the point where this text node appears in the document.
    *                         Used as the `fromId` for any extracted edges.
    */
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: context may be DocID (pre-H2) or SectionID (within a section)
-  public evaluateTextNode(textNodeData: TextNodeData, sectionContext: DocID | SectionID): void {
-    const detectedReferences: readonly DetectedInlineReference[] =
-      this.detectInlineReferences(textNodeData.text);
+  public evaluateTextNode(
+    textNodeData: TextNodeData,
+    // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: context may be a DocID or a SectionID
+    sectionContext: DocID | SectionID,
+  ): void {
+    this.evaluateInlineRun(
+      [
+        {
+          kind: 'text',
+          text: textNodeData.text,
+          wrappers: [],
+          ...(textNodeData.range !== undefined ? { range: textNodeData.range } : {}),
+        },
+      ],
+      sectionContext,
+    );
+  }
 
-    for (const detectedReference of detectedReferences) {
-      // Validate that the TargetID conforms to the identifier grammar. A
-      // target may be either a DocID (`8.1`) or a SectionID (`8.1#3`), so both
-      // grammars are tried.
-      const targetIsDocId: boolean =
-        this.grammar.parseDocId(detectedReference.targetId).valid;
-      const targetIsSectionId: boolean =
-        this.grammar.parseSectionId(detectedReference.targetId).valid;
+  /**
+   * Evaluates one inline run -- a paragraph, say -- for inline references.
+   *
+   * Recognition reads the run as a reader sees it, across every node boundary
+   * (1#9.5 rule 1). Only then is the source consulted: a citation extracts an
+   * edge only when its keyword, space and identifier all lie in one text
+   * segment and are literal in the source there (1#9.11 rule 2). One that
+   * spans segments -- split by formatting, inline HTML, code or a break -- is
+   * reported, never passed over.
+   *
+   * @param segments - The run's visible text, in order, per {@link InlineSegment}
+   * @param sectionContext - Section the run belongs to, used as `fromId`
+   */
+  public evaluateInlineRun(
+    segments: readonly InlineSegment[],
+    // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: context may be a DocID or a SectionID
+    sectionContext: DocID | SectionID,
+  ): void {
+    const visible: string = segments.map((segment: InlineSegment): string => segment.text).join('');
+    const owners: readonly number[] = InlineReferenceRule.indexSegmentOwners(segments);
+    const starts: readonly number[] = InlineReferenceRule.indexSegmentStarts(segments);
+    const aligned: Map<number, AlignedSegment> = new Map<number, AlignedSegment>();
 
-      if (!targetIsDocId && !targetIsSectionId) {
-        // TargetID does not conform to the grammar — skip silently
-        // (the regex should only produce valid-grammar IDs, but this
-        // is a defensive check)
+    for (const detected of this.detectInlineReferences(visible, segments, owners)) {
+      const keywordOwner: number = owners[detected.index] ?? 0;
+      const keywordSegment: InlineSegment | undefined = segments[keywordOwner];
+      const range: PositionRange | undefined = keywordSegment?.range;
+
+      if (!detected.conforms) {
+        this.reportNonConformingCandidate(detected, sectionContext, range);
         continue;
       }
 
-      // Check whether the TargetID's parent DocID is declared or is a self-reference
-      const targetIdDeclared: boolean = this.tellTargetIdDeclared(detectedReference.targetId);
+      const end: number =
+        detected.index + detected.keyword.length + detected.gap.length + detected.targetId.length;
+      const lastOwner: number = owners[end - 1] ?? keywordOwner;
 
-      if (!targetIdDeclared) {
-        const parentDocId: string = this.showTargetDocId(detectedReference.targetId);
-        const quoted: string = `"${detectedReference.kind} ${detectedReference.targetId}"`;
-        const data: Readonly<Record<string, unknown>> = {
-          reason: UNDECLARED_TARGET_REASON,
-          targetId: detectedReference.targetId,
-          targetDocId: parentDocId,
-          fromId: sectionContext,
-          kind: detectedReference.kind,
+      if (lastOwner !== keywordOwner || keywordSegment === undefined) {
+        const split: SplitDescription = InlineReferenceRule.describeSplit(
+          segments,
+          keywordOwner,
+          lastOwner,
+        );
+
+        this.reportUnnavigableCitation(detected, sectionContext, range, split.because, split.extra);
+        continue;
+      }
+
+      let alignment: AlignedSegment | undefined = aligned.get(keywordOwner);
+
+      if (alignment === undefined) {
+        const source: string | undefined = this.sliceSource(keywordSegment.range);
+
+        alignment = {
+          source,
+          offsets:
+            source === undefined
+              ? undefined
+              : alignParsedToSource(source, keywordSegment.text),
         };
+        aligned.set(keywordOwner, alignment);
+      }
 
-        // A SectionID target is certainly a reference: nobody writes
-        // "per 60#2" in prose. A bare number may be prose, so it only warns,
-        // and the corpus validator raises it if the document exists.
-        const diagnostic: Diagnostic = detectedReference.targetId.includes('#')
-          ? this.createDiagnostic(
-              `${quoted} targets DocID "${parentDocId}", which the References section ` +
-              `does not declare. Declare ${parentDocId} in References.`,
-              textNodeData.range,
-              data,
-              UNDECLARED_SECTION_TARGET_SEVERITY,
-            )
-          : this.createDiagnostic(
-              `${quoted} reads as a reference to DocID "${parentDocId}", which the ` +
-              `References section does not declare. If it is a reference, declare ` +
-              `${parentDocId} in References; if it is ordinary prose, it can be left as it is.`,
-              textNodeData.range,
-              data,
-            );
-        this.collectedDiagnostics.push(diagnostic);
+      const local: DetectedInlineReference = {
+        ...detected,
+        index: detected.index - (starts[keywordOwner] ?? 0),
+      };
+
+      if (!this.tellCitationIsLiteral(local, range, alignment.source, alignment.offsets)) {
+        this.reportUnnavigableCitation(detected, sectionContext, range);
         continue;
       }
 
-      // Declared or self-reference — extract the InlineReferenceEdge
-      const inlineReferenceEdge: InlineReferenceEdge = {
+      if (!this.tellTargetIdDeclared(detected.targetId)) {
+        this.reportUndeclaredTarget(detected, sectionContext, range);
+        continue;
+      }
+
+      this.collectedInlineReferences.push({
         fromId: sectionContext,
-        toId: detectedReference.targetId,
-        kind: detectedReference.kind,
-      };
-      this.collectedInlineReferences.push(inlineReferenceEdge);
+        toId: detected.targetId,
+        kind: detected.kind,
+      });
     }
   }
 
   /**
-   * Checks whether a keyword at the end of one text node is followed by an
-   * identifier wrapped in inline formatting, as in `see [8.1#3](8.1.md)` or
-   * `per **8.1#3**`.
+   * Records which segment each character of a run's visible text came from.
    *
-   * Such a reference is invisible to navigation: the characters between the
-   * keyword and the identifier stop a grep for `see 8.1#3` from matching it,
-   * and the linter follows grep deliberately, so no edge is extracted. A
-   * warning tells the author to write the identifier as plain text.
-   *
-   * @param precedingText - The value of the text node before the wrapper
-   * @param wrapperType - The MDAST type of the node that follows it
-   * @param wrappedText - The plain text content of that node
-   * @param range - Positional range of the wrapper node, when available
+   * @param segments - The run's segments
+   * @returns For each visible offset, the index of its segment
    */
-  public evaluateWrappedReference(
-    precedingText: string,
-    wrapperType: string,
-    wrappedText: string,
+  private static indexSegmentOwners(segments: readonly InlineSegment[]): readonly number[] {
+    const owners: number[] = [];
+
+    // One entry per UTF-16 unit, to line up with string offsets; iterating the
+    // text with for...of would step by code point instead.
+    segments.forEach((segment: InlineSegment, index: number): void => {
+      const start: number = owners.length;
+
+      owners.length = start + segment.text.length;
+      owners.fill(index, start);
+    });
+
+    return owners;
+  }
+
+  /**
+   * Records where each segment begins in a run's visible text.
+   *
+   * @param segments - The run's segments
+   * @returns The visible offset of each segment's first character
+   */
+  private static indexSegmentStarts(segments: readonly InlineSegment[]): readonly number[] {
+    const starts: number[] = [];
+    let offset: number = 0;
+
+    for (const segment of segments) {
+      starts.push(offset);
+      offset += segment.text.length;
+    }
+
+    return starts;
+  }
+
+  /**
+   * Says what split a citation across segments, for its diagnostic.
+   *
+   * Formatting is named when it is what differs: `see **8.1#3**` is split by
+   * bold text. Otherwise the kind of segment in the way is named, and where
+   * two text segments meet with nothing visible between them, only inline
+   * HTML can have separated them.
+   *
+   * @param segments - The run's segments
+   * @param first - Index of the segment holding the keyword
+   * @param last - Index of the segment holding the identifier's end
+   * @returns The phrase for the message, and any data it adds
+   */
+  private static describeSplit(
+    segments: readonly InlineSegment[],
+    first: number,
+    last: number,
+  ): SplitDescription {
+    const spanned: readonly InlineSegment[] = segments.slice(first, last + 1);
+    const shared: readonly string[] = spanned.reduce(
+      (common: readonly string[], segment: InlineSegment): readonly string[] =>
+        common.filter((wrapper: string, depth: number): boolean => segment.wrappers[depth] === wrapper),
+      spanned[0]?.wrappers ?? [],
+    );
+
+    for (const segment of spanned) {
+      const wrapper: string | undefined = segment.wrappers[shared.length];
+      const description: string | undefined =
+        wrapper === undefined ? undefined : WRAPPER_DESCRIPTIONS.get(wrapper);
+
+      if (wrapper !== undefined && description !== undefined) {
+        return { because: `is split by ${description}`, extra: { wrapper } };
+      }
+    }
+
+    const obstacle: InlineSegment | undefined = spanned.find(
+      (segment: InlineSegment): boolean => segment.kind !== 'text',
+    );
+    const description: string =
+      SPLIT_DESCRIPTIONS.get(obstacle?.kind ?? '') ?? TRANSPARENT_SPLIT_DESCRIPTION;
+
+    return { because: `is split by ${description}` };
+  }
+
+  /**
+   * Reports whether this citation is written literally at its own position.
+   *
+   * Only the keyword, the single space and the identifier are required to be
+   * literal. What follows them is not: a citation may be terminated by a
+   * character reference (`see 1#1&nbsp;here`) and remain perfectly findable,
+   * because a search stops at the identifier. Applying the parsed token's
+   * terminator rules to raw characters rejected exactly those documents.
+   *
+   * @param detected - The citation under test
+   * @param range - The node's range, absent in unit tests that supply bare text
+   * @param source - The node's raw source, when it could be located
+   * @param offsets - Parsed-to-source offset map, when alignment succeeded
+   * @returns `true` when the source carries this citation literally
+   */
+  private tellCitationIsLiteral(
+    detected: DetectedInlineReference,
+    range?: PositionRange,
+    source?: string,
+    offsets?: readonly number[],
+  ): boolean {
+    if (detected.gap !== ' ') {
+      return false;
+    }
+
+    // No range means no source to consult: the rule's unit tests supply bare
+    // text. That differs from having a range and failing to map it, which is
+    // treated as unverifiable below.
+    if (range === undefined) {
+      return true;
+    }
+
+    if (source === undefined || offsets === undefined) {
+      return false;
+    }
+
+    const at: number | undefined = offsets[detected.index];
+    const nodeStart: number | undefined = this.offsetOf(range.start);
+
+    if (at === undefined || nodeStart === undefined) {
+      return false;
+    }
+
+    return (
+      source.startsWith(`${detected.keyword} ${detected.targetId}`, at) &&
+      this.tellRecipeBoundsCitation(nodeStart + at, detected)
+    );
+  }
+
+  /**
+   * Reports whether the published recipes accept the characters either side
+   * of a citation in the source (1#9.11).
+   *
+   * Before the keyword, the recipes accept a word boundary or `_`: `_` is a
+   * word character to both engines, and `_see 8.1_` is ordinary emphasis.
+   * After the identifier they accept anything but an ASCII letter or digit.
+   * After a bare DocID a `#` is refused too, and a `.` is allowed only as the
+   * end of a sentence -- not before a letter, digit, `.` or `#` -- so that
+   * `8.1` is not found inside `8.1#3`, `8.1.2` or `8.1..2`; after a SectionID
+   * a `.` is allowed, since the recipe finds a section and those below it.
+   *
+   * The whole source is read, not the node's slice: a citation at the start
+   * of a node is preceded by whatever came before the node.
+   *
+   * @param start - Absolute source offset of the keyword
+   * @param detected - The citation, known to be literal at `start`
+   * @returns `true` when the recipe for this target would match here
+   */
+  private tellRecipeBoundsCitation(start: number, detected: DetectedInlineReference): boolean {
+    // `(\b|_)` before the keyword: `_`, or anything the word-boundary test
+    // accepts, which is ripgrep's own definition of `\b`.
+    const before: string = start > 0 ? this.sourceText.charAt(start - 1) : '';
+
+    if (before !== '_' && !this.tellAtWordBoundary(this.sourceText, start)) {
+      return false;
+    }
+
+    const end: number = start + detected.keyword.length + 1 + detected.targetId.length;
+    const next: string = this.sourceText.charAt(end);
+
+    if (next === '' || LINE_BREAK_CHARACTER.test(next)) {
+      return true;
+    }
+
+    if (RECIPE_EXCLUDED_BOUNDARY.test(next) || next === '#') {
+      return false;
+    }
+
+    if (next !== '.' || detected.targetId.includes('#')) {
+      return true;
+    }
+
+    const afterFullStop: string = this.sourceText.charAt(end + 1);
+
+    return (
+      !RECIPE_EXCLUDED_BOUNDARY.test(afterFullStop) &&
+      afterFullStop !== '.' &&
+      afterFullStop !== '#'
+    );
+  }
+
+  /**
+   * Reports a candidate that is not a complete, conforming identifier.
+   *
+   * The `#` decides whether anything is reported at all. Ordinary writing
+   * produces numbers after `see` and `per` constantly -- `per 60s`,
+   * `see 1..2` -- and never produces `1#1`. So a failed candidate carrying a
+   * separator was certainly meant as an identifier and is an error, while one
+   * without is prose and is passed over in silence.
+   *
+   * @param detected - The candidate that failed
+   * @param sectionContext - Section the text belongs to
+   * @param range - Positional range of the text node
+   */
+  private reportNonConformingCandidate(
+    detected: DetectedInlineReference,
+    // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: context may be a DocID or a SectionID
+    sectionContext: DocID | SectionID,
     range?: PositionRange,
   ): void {
-    const wrapperDescription: string | undefined = WRAPPER_DESCRIPTIONS.get(wrapperType);
-    const keywordMatch: RegExpExecArray | null = TRAILING_KEYWORD_PATTERN.exec(precedingText);
-    const identifierMatch: RegExpExecArray | null = LEADING_IDENTIFIER_PATTERN.exec(wrappedText);
-
-    if (wrapperDescription === undefined || keywordMatch === null || identifierMatch === null) {
+    if (!detected.candidate.includes('#')) {
       return;
     }
 
-    const kind: InlineReferenceKind = (keywordMatch[1] ?? '').toLowerCase() as InlineReferenceKind;
-    const targetId: string = identifierMatch[1] ?? '';
+    this.collectedDiagnostics.push(
+      this.createDiagnostic(
+        `"${detected.keyword} ${detected.candidate}" is malformed: ` +
+        `"${detected.candidate}" is not a complete identifier. It is not read as a ` +
+        `reference to a shorter one.`,
+        range,
+        {
+          cause: MALFORMED_TARGET_CAUSE,
+          candidate: detected.candidate,
+          fromId: sectionContext,
+          kind: detected.kind,
+        },
+        'error',
+      ),
+    );
+  }
+
+  /**
+   * Reports a citation whose source form no search can find (1#9.11 rule 2).
+   *
+   * Severity follows the same test as an undeclared target: an identifiable
+   * target -- a SectionID, a declared DocID, or the document's own -- was
+   * certainly meant as a citation, so an unfindable one is an error. A bare
+   * number naming nothing known cannot be told from emphasised prose, so it
+   * warns, and corpus validation raises it if the document turns out to exist.
+   *
+   * @param detected - The citation that is not literal in the source
+   * @param sectionContext - Section the text belongs to
+   * @param range - Positional range of the text node
+   * @param split - What split it, when it spans segments, e.g. `is split by bold text`
+   * @param extra - Data the diagnostic carries in addition
+   */
+  private reportUnnavigableCitation(
+    detected: DetectedInlineReference,
+    // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: context may be a DocID or a SectionID
+    sectionContext: DocID | SectionID,
+    range?: PositionRange,
+    split?: string,
+    extra?: Readonly<Record<string, unknown>>,
+  ): void {
+    const identifiable: boolean =
+      detected.targetId.includes('#') || this.tellTargetIdDeclared(detected.targetId);
+    const because: string =
+      split === undefined
+        ? 'is not written as adjacent literal text on one line'
+        : `${split} rather than written as adjacent literal text on one line`;
 
     this.collectedDiagnostics.push(
       this.createDiagnostic(
-        `The identifier after "${kind}" is inside ${wrapperDescription}, so neither grep nor ` +
-        `the linter reads "${kind} ${targetId}" as a reference. ` +
-        `Write the identifier as plain text straight after the keyword.`,
+        `"${detected.keyword} ${detected.targetId}" ${because}, so no search finds it. ` +
+        `Put the keyword and the identifier on one line with a single space between ` +
+        `them, and without formatting or escapes.`,
         range,
-        { reason: WRAPPED_REFERENCE_REASON, targetId, kind, wrapper: wrapperType },
+        {
+          cause: CITATION_SOURCE_FORM_CAUSE,
+          reason: UNDECLARED_TARGET_REASON,
+          targetId: detected.targetId,
+          targetDocId: this.showTargetDocId(detected.targetId),
+          fromId: sectionContext,
+          kind: detected.kind,
+          ...(extra ?? {}),
+        },
+        identifiable ? 'error' : INLINE_REFERENCE_DIAGNOSTIC_SEVERITY,
       ),
     );
+  }
+
+  /**
+   * Reports a conforming, navigable citation whose DocID is not declared.
+   *
+   * @param detected - The citation
+   * @param sectionContext - Section the text belongs to
+   * @param range - Positional range of the text node
+   */
+  private reportUndeclaredTarget(
+    detected: DetectedInlineReference,
+    // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: context may be a DocID or a SectionID
+    sectionContext: DocID | SectionID,
+    range?: PositionRange,
+  ): void {
+    const parentDocId: string = this.showTargetDocId(detected.targetId);
+    const quoted: string = `"${detected.kind} ${detected.targetId}"`;
+    const data: Readonly<Record<string, unknown>> = {
+      reason: UNDECLARED_TARGET_REASON,
+      targetId: detected.targetId,
+      targetDocId: parentDocId,
+      fromId: sectionContext,
+      kind: detected.kind,
+    };
+
+    const diagnostic: Diagnostic = detected.targetId.includes('#')
+      ? this.createDiagnostic(
+          `${quoted} targets DocID "${parentDocId}", which the References section ` +
+          `does not declare. Declare ${parentDocId} in References.`,
+          range,
+          data,
+          UNDECLARED_SECTION_TARGET_SEVERITY,
+        )
+      : this.createDiagnostic(
+          `${quoted} reads as a reference to DocID "${parentDocId}", which the ` +
+          `References section does not declare. If it is a reference, declare ` +
+          `${parentDocId} in References; if it is ordinary prose, it can be left as it is.`,
+          range,
+          data,
+        );
+
+    this.collectedDiagnostics.push(diagnostic);
   }
 
   /**
@@ -511,51 +973,188 @@ export class InlineReferenceRule {
   // -------------------------------------------------------------------------
 
   /**
-   * Scans a text string for all inline reference matches.
+   * Finds every `see`/`per` citation candidate in a run's visible text.
    *
-   * Detects all occurrences of `see TargetID` or `per TargetID` where:
-   * - The keyword is preceded by a word boundary (start of string, whitespace,
-   *   or punctuation such as `(`)
-   * - The keyword's first letter may be capitalised (`See`, `Per`)
-   * - TargetID is a maximal match of a DocID with an optional `#` and section path
-   * - A period followed by a non-digit character terminates the TargetID
-   *   (the period is treated as sentence punctuation, not part of the ID)
+   * A keyword is recognised where a word boundary precedes it in the text a
+   * reader sees, and a candidate where digits follow it after whitespace.
+   * Neither is recognised when it starts inside inline code or a break: code
+   * may continue a candidate, but an author never cites through it (1#9.5).
    *
-   * @param text - The plain text content to scan
-   * @returns An array of detected inline reference matches, in order of occurrence
+   * @param visible - The run's visible text
+   * @param segments - The run's segments
+   * @param owners - For each visible offset, the index of its segment
+   * @returns The candidates, in order of occurrence, indexed into `visible`
    */
-  private detectInlineReferences(text: string): readonly DetectedInlineReference[] {
+  private detectInlineReferences(
+    visible: string,
+    segments: readonly InlineSegment[],
+    owners: readonly number[],
+  ): readonly DetectedInlineReference[] {
     const detectedMatches: DetectedInlineReference[] = [];
+    const tellIsText = (offset: number): boolean =>
+      segments[owners[offset] ?? -1]?.kind === 'text';
 
-    // Reset the regex lastIndex to ensure stateless scanning
-    INLINE_REFERENCE_PATTERN.lastIndex = 0;
+    KEYWORD_PATTERN.lastIndex = 0;
 
-    let regexMatch: RegExpExecArray | null = INLINE_REFERENCE_PATTERN.exec(text);
+    let keywordMatch: RegExpExecArray | null = KEYWORD_PATTERN.exec(visible);
 
-    while (regexMatch !== null) {
-      const keywordCapture: string | undefined = regexMatch[1];
-      const targetIdCapture: string | undefined = regexMatch[2];
+    while (keywordMatch !== null) {
+      const keyword: string = keywordMatch[1] ?? '';
+      const index: number = keywordMatch.index;
+      const keywordIsText: boolean = Array.from(keyword, (_: string, offset: number): boolean =>
+        tellIsText(index + offset),
+      ).every(Boolean);
 
-      if (keywordCapture === undefined || targetIdCapture === undefined) {
-        regexMatch = INLINE_REFERENCE_PATTERN.exec(text);
-        continue;
+      if (keywordIsText && this.tellAtWordBoundary(visible, index)) {
+        const detected: DetectedInlineReference | undefined = this.readCandidate(
+          visible,
+          index,
+          keyword,
+        );
+
+        if (
+          detected !== undefined &&
+          tellIsText(index + keyword.length + detected.gap.length)
+        ) {
+          detectedMatches.push(detected);
+        }
       }
 
-      const keyword: string = keywordCapture;
-      const targetId: string = targetIdCapture;
-
-      const normalisedKind: InlineReferenceKind = keyword.toLowerCase() as InlineReferenceKind;
-
-      const detectedReference: DetectedInlineReference = {
-        kind: normalisedKind,
-        targetId,
-      };
-      detectedMatches.push(detectedReference);
-
-      regexMatch = INLINE_REFERENCE_PATTERN.exec(text);
+      keywordMatch = KEYWORD_PATTERN.exec(visible);
     }
 
     return detectedMatches;
+  }
+
+  /**
+   * Reads the candidate identifier that follows a keyword, if there is one.
+   *
+   * The candidate is the maximal run of identifier characters, taken whole
+   * before it is tested. Taking it whole is what stops a malformed identifier
+   * decaying into a shorter valid one: `1#1#9` fails, rather than passing as
+   * `1#1`.
+   *
+   * @param text - The run's visible text
+   * @param keywordIndex - Index of the keyword's first character
+   * @param keyword - The keyword exactly as written
+   * @returns The candidate, or `undefined` when no digits follow the keyword
+   */
+  private readCandidate(
+    text: string,
+    keywordIndex: number,
+    keyword: string,
+  ): DetectedInlineReference | undefined {
+    const afterKeyword: number = keywordIndex + keyword.length;
+    let cursor: number = afterKeyword;
+
+    while (cursor < text.length && WHITESPACE.test(text.charAt(cursor))) {
+      cursor += 1;
+    }
+
+    const gap: string = text.slice(afterKeyword, cursor);
+
+    if (gap.length === 0 || !/[0-9]/.test(text.charAt(cursor))) {
+      return undefined;
+    }
+
+    const candidateStart: number = cursor;
+
+    while (cursor < text.length && CANDIDATE_CHARACTERS.test(text.charAt(cursor))) {
+      cursor += 1;
+    }
+
+    const candidate: string = text.slice(candidateStart, cursor);
+    const terminator: string | undefined =
+      cursor < text.length ? text.charAt(cursor) : undefined;
+
+    const terminated: boolean =
+      terminator === undefined ||
+      WHITESPACE.test(terminator) ||
+      PERMITTED_TERMINATOR_PUNCTUATION.has(terminator);
+
+    const targetId: string = candidate.endsWith('.') ? candidate.slice(0, -1) : candidate;
+    const conforms: boolean =
+      terminated &&
+      (this.grammar.parseDocId(targetId).valid || this.grammar.parseSectionId(targetId).valid);
+
+    return {
+      kind: keyword.toLowerCase() as InlineReferenceKind,
+      keyword,
+      candidate,
+      targetId,
+      conforms,
+      gap,
+      index: keywordIndex,
+    };
+  }
+
+  /**
+   * Reports whether a keyword at `index` stands at a word boundary.
+   *
+   * Reads whole code points: `charAt` would return half of a supplementary
+   * character and misjudge it.
+   *
+   * @param text - The text being scanned
+   * @param index - Index of the keyword's first character
+   * @returns `true` when nothing word-like immediately precedes the keyword
+   */
+  private tellAtWordBoundary(text: string, index: number): boolean {
+    if (index === 0) {
+      return true;
+    }
+
+    const before: number | undefined = text.codePointAt(index - 1);
+
+    if (before === undefined) {
+      return true;
+    }
+
+    // A low surrogate here means the preceding character is supplementary;
+    // step back one more unit to read the whole code point.
+    const isLowSurrogate: boolean = before >= 0xdc00 && before <= 0xdfff;
+    const codePoint: number | undefined = isLowSurrogate
+      ? text.codePointAt(index - 2)
+      : before;
+
+    if (codePoint === undefined) {
+      return true;
+    }
+
+    return !WORD_CHARACTER.test(String.fromCodePoint(codePoint));
+  }
+
+
+  /**
+   * Returns the raw source belonging to a node, when its range is known.
+   *
+   * @param range - The node's positional range
+   * @returns The source slice, or `undefined` when no range was supplied
+   */
+  private sliceSource(range?: PositionRange): string | undefined {
+    if (range === undefined) {
+      return undefined;
+    }
+
+    const startOffset: number | undefined = this.offsetOf(range.start);
+    const endOffset: number | undefined = this.offsetOf(range.end);
+
+    if (startOffset === undefined || endOffset === undefined) {
+      return undefined;
+    }
+
+    return this.sourceText.slice(startOffset, endOffset);
+  }
+
+  /**
+   * Converts a line/character position into an absolute source offset.
+   *
+   * @param position - A position within the document
+   * @returns The offset, or `undefined` when the line is out of range
+   */
+  private offsetOf(position: Position): number | undefined {
+    const lineStart: number | undefined = this.lineStarts[position.line];
+
+    return lineStart === undefined ? undefined : lineStart + position.character;
   }
 
   /**

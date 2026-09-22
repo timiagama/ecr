@@ -66,10 +66,12 @@ import type {
 import type {
   ReferencesSectionRuleResult,
   ListItemNodeData,
+  ListItemSegment,
 } from './references-section-rule.js';
 
 import type {
   InlineReferenceRuleResult,
+  InlineSegment,
   TextNodeData,
 } from './inline-reference-rule.js';
 
@@ -103,6 +105,8 @@ interface MdastNode {
   readonly depth?: number;
   /** Text value, present only on literal nodes (e.g., `text`, `code`). */
   readonly value?: string;
+  /** Alternative text, present on image nodes. */
+  readonly alt?: string | null;
   /** Positional metadata from the source document. */
   readonly position?: MdastPosition;
 }
@@ -200,6 +204,29 @@ export const EXCLUDED_ANCESTOR_NODE_TYPES: ReadonlySet<string> = new Set([
   'html',
 ]);
 
+/**
+ * MDAST node types whose children form one inline run: the text a reader
+ * sees, recognised as a whole (1#9.5 rule 1). Headings are excluded, since
+ * heading text is not subject to inline reference detection.
+ */
+const INLINE_RUN_NODE_TYPES: ReadonlySet<string> = new Set([
+  'paragraph',
+  'tableCell',
+]);
+
+/**
+ * Inline HTML a reader sees as a line break: an opening `br` tag in any case,
+ * whatever follows its name -- `<br>`, `<BR/>`, `<br class="x">`. It separates
+ * the words either side of it. Other inline HTML does not, so it is
+ * transparent to recognition (1#9.5 rule 1).
+ *
+ * Only the tag's name is read. The parser has already delimited the whole
+ * tag as one node, so its attributes need no second parse here; matching
+ * them again assumed every `>` closed the tag, and `<br title="x > y">` was
+ * taken for transparent HTML.
+ */
+const LINE_BREAK_HTML: RegExp = /^<br(?=[\s/>])/i;
+
 // ---------------------------------------------------------------------------
 // MDAST position type
 // ---------------------------------------------------------------------------
@@ -212,6 +239,19 @@ interface MdastPosition {
   readonly start: { readonly line: number; readonly column: number };
   /** End position with 1-based line and column. */
   readonly end: { readonly line: number; readonly column: number };
+}
+
+/**
+ * Where the `## References` heading was found: at the root, or inside a
+ * container, which is a placement violation (1#9.11 rule 3).
+ */
+interface ReferencesSectionLocation {
+  /** The `## References` heading node. */
+  readonly heading: MdastNode;
+  /** The children of its parent, in order: the root's, or a container's. */
+  readonly siblings: readonly MdastNode[];
+  /** The heading's index among them. */
+  readonly index: number;
 }
 
 /**
@@ -324,7 +364,7 @@ export class PerDocumentVisitor {
   public lint(markdownText: string): LintResult {
     const root: MdastRoot = this.parseMarkdown(markdownText);
     const passOneResult: HeadingsAndReferencesPassResult =
-      this.executeHeadingsAndReferencesPass(root);
+      this.executeHeadingsAndReferencesPass(root, markdownText);
 
     // If ECR101 failed (no valid identity), return early
     if (passOneResult.identityResult.identity === undefined) {
@@ -352,6 +392,7 @@ export class PerDocumentVisitor {
         root,
         passOneResult.identityResult.identity.docId,
         declaredDocIds,
+        markdownText,
       );
 
     return this.assembleLintResult(
@@ -414,10 +455,12 @@ export class PerDocumentVisitor {
    * for ECR101, then the collected headings are replayed for ECR102 and ECR103.
    *
    * @param root - The parsed MDAST root node
+   * @param sourceText - The document's raw Markdown, for the heading source-form check of 1#9.11
    * @returns The intermediate result from the headings and references pass
    */
   private executeHeadingsAndReferencesPass(
     root: MdastRoot,
+    sourceText: string,
   ): HeadingsAndReferencesPassResult {
     // Phase 1: Collect all headings and feed to ECR101
     const collectedHeadings: HeadingNodeData[] = [];
@@ -427,6 +470,7 @@ export class PerDocumentVisitor {
     const identityRule: DocumentIdentityRule = new DocumentIdentityRule({
       uri: this.uri,
       grammar: this.grammar,
+      sourceText,
     });
 
     for (const headingData of collectedHeadings) {
@@ -447,12 +491,14 @@ export class PerDocumentVisitor {
       uri: this.uri,
       docId,
       grammar: this.grammar,
+      sourceText,
     });
 
     const referencesSectionRule: ReferencesSectionRule = new ReferencesSectionRule({
       uri: this.uri,
       docId,
       grammar: this.grammar,
+      sourceText,
     });
 
     // Feed collected headings to ECR102 and ECR103
@@ -514,66 +560,104 @@ export class PerDocumentVisitor {
   }
 
   /**
-   * Walks the AST to feed list items within the References section to ECR103.
+   * Finds the References section and feeds its placement and entries to ECR103.
    *
-   * After the References heading has been detected by ECR103, this method
-   * walks the AST in document order. When the References heading is encountered,
-   * subsequent list items are fed to ECR103 until a non-list sibling node
-   * is encountered at heading level or until another heading appears.
+   * The `## References` heading is looked for anywhere in the tree, not only
+   * among the root's children. A section nested in a blockquote or a list
+   * item used to be passed over, so its entries were silently discarded and
+   * the document reported as having an empty References section. It is now
+   * found, reported as misplaced (1#9.11 rule 3), and its entries still read.
    *
-   * The approach iterates through the root's children to find the heading
-   * node matching `## References`, then processes the immediately following
-   * list node's children.
+   * The entries are the items of the list that immediately follows the
+   * heading, or of a list that opens the container immediately following it
+   * -- which is also a placement violation.
    *
    * @param root - The parsed MDAST root node
-   * @param referencesSectionRule - The ECR103 rule instance to feed list items to
+   * @param referencesSectionRule - The ECR103 rule instance to feed
    */
   private feedListItemsToReferencesRule(
     root: MdastRoot,
     referencesSectionRule: ReferencesSectionRule,
   ): void {
-    // Only proceed if the References heading was detected
     if (!referencesSectionRule.tellReferencesHeadingDetected()) {
       return;
     }
 
-    // Walk the root's top-level children to find the References heading
-    // and the list that immediately follows it
-    let referencesHeadingFound: boolean = false;
+    const section: ReferencesSectionLocation | undefined = this.findReferencesSection(root);
 
-    for (const child of root.children) {
-      if (child.type === 'heading') {
-        const headingText: string = toString(child);
-        const headingDepth: number | undefined = child.depth;
+    if (section === undefined) {
+      return;
+    }
 
-        if (headingDepth === 2 && headingText === 'References') {
-          referencesHeadingFound = true;
-          continue;
-        }
+    const next: MdastNode | undefined = section.siblings[section.index + 1];
+    const list: MdastNode | undefined = this.findReferencesList(next);
+    const nested: boolean = section.siblings !== root.children || (list !== undefined && list !== next);
 
-        // Another heading after References -- stop collecting list items
-        if (referencesHeadingFound) {
-          break;
-        }
-      } else if (child.type === 'list' && referencesHeadingFound) {
-        // Feed each list item to ECR103
-        if (child.children !== undefined) {
-          for (const listItemNode of child.children) {
-            if (listItemNode.type === 'listItem') {
-              const listItemData: ListItemNodeData =
-                this.extractListItemNodeData(listItemNode);
-              referencesSectionRule.evaluateListItem(listItemData);
-            }
-          }
-        }
+    referencesSectionRule.evaluateSectionPlacement(
+      this.mapPosition(section.heading.position),
+      nested,
+    );
 
-        // Only process the first list after the References heading
-        break;
-      } else if (referencesHeadingFound) {
-        // Non-list, non-heading node after References heading -- stop
-        break;
+    for (const listItemNode of list?.children ?? []) {
+      if (listItemNode.type === 'listItem') {
+        referencesSectionRule.evaluateListItem(this.extractListItemNodeData(listItemNode));
       }
     }
+  }
+
+  /**
+   * Finds the list holding the References entries, given the node after the
+   * heading: that node itself, or a list opening the container it is, at any
+   * depth of nesting.
+   *
+   * Looking one container deep lost `> > - 8.1 - …`: the list was never
+   * found, so its entries were discarded and the section reported as empty.
+   *
+   * @param next - The node immediately following the `## References` heading
+   * @returns The entries' list, or `undefined` when there is none
+   */
+  private findReferencesList(next: MdastNode | undefined): MdastNode | undefined {
+    let candidate: MdastNode | undefined = next;
+
+    while (candidate !== undefined && candidate.type !== 'heading') {
+      if (candidate.type === 'list') {
+        return candidate;
+      }
+
+      candidate = candidate.children?.[0];
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Finds the first `## References` heading in document order, at any depth.
+   *
+   * @param node - The node to search from
+   * @returns The heading and its position among its siblings, or `undefined`
+   */
+  private findReferencesSection(node: MdastNode | MdastRoot): ReferencesSectionLocation | undefined {
+    const children: readonly MdastNode[] = node.children ?? [];
+
+    for (let index: number = 0; index < children.length; index += 1) {
+      const child: MdastNode | undefined = children[index];
+
+      if (child === undefined) {
+        continue;
+      }
+
+      if (child.type === 'heading' && this.tellReferencesHeading(this.extractHeadingNodeData(child))) {
+        return { heading: child, siblings: children, index };
+      }
+
+      const found: ReferencesSectionLocation | undefined = this.findReferencesSection(child);
+
+      if (found !== undefined) {
+        return found;
+      }
+    }
+
+    return undefined;
   }
 
   // -------------------------------------------------------------------------
@@ -598,18 +682,21 @@ export class PerDocumentVisitor {
    * @param root - The parsed MDAST root node
    * @param docId - The document's established DocID
    * @param declaredDocIds - The set of DocIDs declared in the References section
+   * @param sourceText - The document's raw Markdown, for the source-form checks of 1#9.11
    * @returns The intermediate result from the inline references pass
    */
   private executeInlineReferencesPass(
     root: MdastRoot,
     docId: DocID,
     declaredDocIds: ReadonlySet<DocID>,
+    sourceText: string,
   ): InlineReferencesPassResult {
     const inlineReferenceRule: InlineReferenceRule = new InlineReferenceRule({
       uri: this.uri,
       docId,
       grammar: this.grammar,
       declaredDocIds,
+      sourceText,
     });
 
     // Track the current section context -- starts with the DocID.
@@ -634,9 +721,13 @@ export class PerDocumentVisitor {
   }
 
   /**
-   * Recursively walks the AST to find text nodes for ECR104, tracking
+   * Recursively walks the AST to find inline runs for ECR104, tracking
    * ancestor types for exclusion filtering and updating section context
    * when headings are encountered.
+   *
+   * A paragraph is handed to ECR104 whole, as one inline run, because a
+   * citation is recognised in the text a reader sees and not one parsed text
+   * node at a time (1#9.5 rule 1). Its children are not walked separately.
    *
    * A hand-written depth-first, pre-order walk, so that the ancestor types
    * needed for exclusion filtering are tracked without another dependency.
@@ -644,7 +735,7 @@ export class PerDocumentVisitor {
    * @param node - The current MDAST node being visited
    * @param ancestorTypes - The types of all ancestor nodes from root to parent
    * @param sectionContext - Mutable wrapper holding the current section context
-   * @param inlineReferenceRule - The ECR104 rule instance to feed text nodes to
+   * @param inlineReferenceRule - The ECR104 rule instance to feed runs to
    */
   private walkNodesForInlineReferences(
     node: MdastNode,
@@ -667,11 +758,24 @@ export class PerDocumentVisitor {
       return;
     }
 
-    if (node.type === 'text' && node.value !== undefined) {
-      // Check ancestor exclusion
-      const excluded: boolean = this.tellNodeExcludedByAncestors(ancestorTypes);
+    if (INLINE_RUN_NODE_TYPES.has(node.type) && node.children !== undefined) {
+      if (!this.tellNodeExcludedByAncestors(ancestorTypes)) {
+        const segments: InlineSegment[] = [];
 
-      if (!excluded) {
+        for (const child of node.children) {
+          this.collectInlineSegments(child, [], segments);
+        }
+
+        inlineReferenceRule.evaluateInlineRun(segments, sectionContext.current);
+      }
+
+      return;
+    }
+
+    // A text node outside any run is not expected from the parser, but if one
+    // appears it is still evaluated, as a run of its own.
+    if (node.type === 'text' && node.value !== undefined) {
+      if (!this.tellNodeExcludedByAncestors(ancestorTypes)) {
         const textNodeData: TextNodeData = this.extractTextNodeData(node);
         inlineReferenceRule.evaluateTextNode(textNodeData, sectionContext.current);
       }
@@ -679,13 +783,8 @@ export class PerDocumentVisitor {
       return;
     }
 
-    // Recurse into children with updated ancestor types
     if (node.children !== undefined) {
       const updatedAncestors: readonly string[] = [...ancestorTypes, node.type];
-
-      if (!this.tellNodeExcludedByAncestors(updatedAncestors)) {
-        this.feedSiblingPairsForWrappedReferences(node.children, inlineReferenceRule);
-      }
 
       for (const child of node.children) {
         this.walkNodesForInlineReferences(
@@ -699,35 +798,57 @@ export class PerDocumentVisitor {
   }
 
   /**
-   * Passes each text node, and the node that follows it, to ECR104's
-   * wrapped-reference check.
+   * Flattens one inline node into the segments a reader sees, in order.
    *
-   * When a reference is written `see [8.1#3](8.1.md)`, the keyword ends one
-   * text node and the identifier starts the next node, so neither is visible
-   * to the per-text-node scan. Only adjacent siblings can reveal it.
+   * Text becomes a `text` segment carrying its position, and inline code a
+   * `code` segment. Formatting contributes its contents, each segment noting
+   * the spans around it. A hard break, an image, and a `<br>` tag become a
+   * `break` of one space, because a reader sees the words either side of them
+   * as separate. Any other inline HTML -- a comment, or a tag such as
+   * `<span>` -- contributes nothing, because it separates nothing:
+   * `60<span>s</span>` reads as `60s`.
    *
-   * @param children - The child nodes of one parent, in document order
-   * @param inlineReferenceRule - The ECR104 rule instance
+   * @param node - An inline node
+   * @param wrappers - Types of the formatting spans enclosing it, outermost first
+   * @param segments - Accumulator the segments are appended to
    */
-  private feedSiblingPairsForWrappedReferences(
-    children: readonly MdastNode[],
-    inlineReferenceRule: InlineReferenceRule,
+  private collectInlineSegments(
+    node: MdastNode,
+    wrappers: readonly string[],
+    segments: InlineSegment[],
   ): void {
-    for (let index: number = 0; index < children.length - 1; index += 1) {
-      const current: MdastNode | undefined = children[index];
-      const next: MdastNode | undefined = children[index + 1];
+    if (node.type === 'text') {
+      const range: PositionRange | undefined = this.mapPosition(node.position);
 
-      if (current?.type !== 'text' || current.value === undefined || next === undefined) {
-        continue;
+      segments.push({
+        kind: 'text',
+        text: node.value ?? '',
+        wrappers,
+        ...(range !== undefined ? { range } : {}),
+      });
+      return;
+    }
+
+    if (node.type === 'inlineCode') {
+      segments.push({ kind: 'code', text: node.value ?? '', wrappers });
+      return;
+    }
+
+    if (node.type === 'html' && !LINE_BREAK_HTML.test((node.value ?? '').trim())) {
+      return;
+    }
+
+    if (node.type !== 'html' && node.children !== undefined) {
+      const inner: readonly string[] = [...wrappers, node.type];
+
+      for (const child of node.children) {
+        this.collectInlineSegments(child, inner, segments);
       }
 
-      inlineReferenceRule.evaluateWrappedReference(
-        current.value,
-        next.type,
-        toString(next),
-        this.mapPosition(next.position),
-      );
+      return;
     }
+
+    segments.push({ kind: 'break', text: ' ', wrappers });
   }
 
   // -------------------------------------------------------------------------
@@ -846,16 +967,65 @@ export class PerDocumentVisitor {
   private extractListItemNodeData(
     listItemNode: MdastNode,
   ): ListItemNodeData {
-    const text: string = toString(listItemNode);
+    const segments: ListItemSegment[] = [];
+
+    this.collectListItemSegments(listItemNode, segments);
+
+    const text: string = segments.map((segment: ListItemSegment): string => segment.text).join('');
     const range: PositionRange | undefined =
       this.mapPosition(listItemNode.position);
 
     const listItemData: ListItemNodeData = {
       text,
+      segments,
       ...(range !== undefined ? { range } : {}),
     };
 
     return listItemData;
+  }
+
+  /**
+   * Classifies a literal node for tracing its text back to the source.
+   *
+   * @param type - The node's MDAST type
+   * @returns `text` for a text node, `code` for inline code, `other` otherwise
+   */
+  private static showSegmentKind(type: string): ListItemSegment['kind'] {
+    if (type === 'text') {
+      return 'text';
+    }
+
+    return type === 'inlineCode' ? 'code' : 'other';
+  }
+
+  /**
+   * Splits a list item's text into the parsed nodes it comes from.
+   *
+   * Follows `mdast-util-to-string` exactly -- a node's `value`, else an
+   * image's `alt`, else its children in order -- so that joining the
+   * segments reproduces the entry text the rule parses, and an offset in that
+   * text identifies the node, and so the source, it came from.
+   *
+   * @param node - A node within the list item
+   * @param segments - Accumulator the segments are appended to
+   */
+  private collectListItemSegments(node: MdastNode, segments: ListItemSegment[]): void {
+    const range: PositionRange | undefined = this.mapPosition(node.position);
+    const withRange: { readonly range?: PositionRange } = range !== undefined ? { range } : {};
+
+    if (node.value !== undefined) {
+      segments.push({ kind: PerDocumentVisitor.showSegmentKind(node.type), text: node.value, ...withRange });
+      return;
+    }
+
+    if (typeof node.alt === 'string' && node.alt.length > 0) {
+      segments.push({ kind: 'other', text: node.alt, ...withRange });
+      return;
+    }
+
+    for (const child of node.children ?? []) {
+      this.collectListItemSegments(child, segments);
+    }
   }
 
   // -------------------------------------------------------------------------

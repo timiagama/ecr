@@ -111,7 +111,10 @@ function runRecipe(pattern: string, lines: readonly CorpusLine[]): readonly stri
     expression.lastIndex = 0;
     let match: RegExpExecArray | null = expression.exec(line.text);
     while (match !== null) {
-      matches.push(match[0].trim());
+      // The citation recipes open with `(\b|_)`, which consumes a `_` before
+      // the keyword. Dropping it reports the citation itself, so expectations
+      // describe what was found rather than what bounded it.
+      matches.push(match[0].replace(/^[^0-9A-Za-z]/, '').trim());
       match = expression.exec(line.text);
     }
   }
@@ -161,28 +164,31 @@ const PROTOCOL_TEXT: string = readFileSync(PROTOCOL_PATH, 'utf8');
 const NAVIGATION_RECIPES: readonly NavigationRecipe[] = [
   {
     purpose: 'Who references document 8.1?',
-    pattern: '\\b([Ss]ee|[Pp]er) 8\\.1(\\.[^0-9]|\\.$|[^0-9.#]|$)',
+    pattern: '(\\b|_)([Ss]ee|[Pp]er) 8\\.1(\\.[^0-9A-Za-z.#]|\\.$|[^0-9A-Za-z.#]|$)',
     expectedMatches: ['per 8.1.', 'see 8.1'],
   },
   {
     purpose: 'Who references any section of 8.1?',
-    pattern: '\\b([Ss]ee|[Pp]er) 8\\.1#',
+    pattern: '(\\b|_)([Ss]ee|[Pp]er) 8\\.1#',
     expectedMatches: ['see 8.1#', 'per 8.1#', 'see 8.1#', 'per 8.1#', 'per 8.1#'],
   },
   {
     purpose: 'Who references section 8.1#3 or below?',
-    pattern: '\\b([Ss]ee|[Pp]er) 8\\.1#3\\b',
+    pattern: '(\\b|_)([Ss]ee|[Pp]er) 8\\.1#3([^0-9A-Za-z#]|$)',
+    // The trailing group consumes one character, as the document recipe's
+    // does: here the `.` ending `8.1#3.` or opening `8.1#3.2`. The same five
+    // citations are found as under the `\b` form this replaced.
     expectedMatches: [
-      'see 8.1#3',
-      'per 8.1#3',
-      'see 8.1#3',
-      'per 8.1#3',
-      'per 8.1#3',
+      'see 8.1#3.',
+      'per 8.1#3.',
+      'see 8.1#3.',
+      'per 8.1#3.',
+      'per 8.1#3.',
     ],
   },
   {
     purpose: 'Either the document or any section?',
-    pattern: '\\b([Ss]ee|[Pp]er) 8\\.1(#[0-9.]*|\\.[^0-9]|\\.$|[^0-9.#]|$)',
+    pattern: '(\\b|_)([Ss]ee|[Pp]er) 8\\.1(#[0-9.]*|\\.[^0-9A-Za-z.#]|\\.$|[^0-9A-Za-z.#]|$)',
     expectedMatches: [
       'see 8.1#3.',
       'per 8.1.',
@@ -195,7 +201,7 @@ const NAVIGATION_RECIPES: readonly NavigationRecipe[] = [
   },
   {
     purpose: 'Every section-precise reference in the corpus',
-    pattern: '\\b([Ss]ee|[Pp]er) [0-9.]+#',
+    pattern: '(\\b|_)([Ss]ee|[Pp]er) [0-9.]+#',
     expectedMatches: [
       'see 8.1#',
       'per 4.2#',
@@ -306,7 +312,7 @@ describe('Feature: Naive patterns are demonstrably unsafe', () => {
       CORPUS_LINES,
     );
     const correctMatches: readonly string[] = runRecipe(
-      '\\b([Ss]ee|[Pp]er) 8\\.1(\\.[^0-9]|\\.$|[^0-9.#]|$)',
+      '(\\b|_)([Ss]ee|[Pp]er) 8\\.1(\\.[^0-9A-Za-z.#]|\\.$|[^0-9A-Za-z.#]|$)',
       CORPUS_LINES,
     );
 
@@ -316,13 +322,27 @@ describe('Feature: Naive patterns are demonstrably unsafe', () => {
     ).toBeGreaterThan(correctMatches.length);
   });
 
+  it('a word-boundary-anchored pattern misses a citation in underscore emphasis', () => {
+    // Guards the reasoning behind the explicit leading and trailing groups.
+    // `_` is a word character, so `\b` fails on both sides of `_see 8.1#3_`,
+    // which is ordinary Markdown emphasis around a valid citation.
+    const lines: readonly CorpusLine[] = [
+      { path: 'emphasis.md', lineNumber: 1, text: 'Retries follow _see 8.1#3_ exactly.' },
+    ];
+
+    expect(runRecipe('\\b([Ss]ee|[Pp]er) 8\\.1#3\\b', lines)).toEqual([]);
+    expect(
+      runRecipe('(\\b|_)([Ss]ee|[Pp]er) 8\\.1#3([^0-9A-Za-z#]|$)', lines),
+    ).toEqual(['see 8.1#3_']);
+  });
+
   it('a lowercase-only pattern under-reports backlinks', () => {
     const lowercaseOnly: readonly string[] = runRecipe(
-      '\\b(see|per) [0-9.]+#',
+      '(\\b|_)(see|per) [0-9.]+#',
       CORPUS_LINES,
     );
     const caseTolerant: readonly string[] = runRecipe(
-      '\\b([Ss]ee|[Pp]er) [0-9.]+#',
+      '(\\b|_)([Ss]ee|[Pp]er) [0-9.]+#',
       CORPUS_LINES,
     );
 

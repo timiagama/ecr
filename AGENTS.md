@@ -99,6 +99,19 @@ node dist/bin.js lint --example
 The three corpus checks need `npm run build` to have run first, because they
 execute the built binary.
 
+`npm test` runs the navigation-guarantee suite, which executes the two search
+engines the protocol names — ripgrep and `grep -E` — against real files rather
+than simulating them with JavaScript regular expressions. The three engines
+disagree on Unicode word boundaries, so a simulation proves nothing about
+either. Two consequences:
+
+* Install with optional dependencies. `@vscode/ripgrep` obtains its platform
+  binary through `optionalDependencies`, so `npm ci --no-optional` strips it and
+  the suite fails at load. This is a devDependency and reaches no consumer.
+* GNU grep must be resolvable. On Windows it ships with Git; the harness falls
+  back to Git's `usr\bin` when it is not on PATH. A missing engine is an error,
+  never a silent skip.
+
 CI runs the first six on Linux and Windows against Node 22 and 24. The example
 corpus is covered separately, by a job that installs the packed tarball into a
 fresh project and runs the binary through `node_modules/.bin`. That job exists
@@ -130,10 +143,19 @@ reason is what lets you tell a genuine exception from a violation.
 ### Runtime dependency surface
 
 This package is a linter people install, so install weight and supply-chain
-surface are product concerns, not preferences. It ships three runtime
+surface are product concerns, not preferences. It ships five runtime
 dependencies. The local implementations of command-line argument parsing
 (`src/cli.ts`) and ignore-pattern matching (`src/meta-documents.ts`) are
 deliberate, not oversights.
+
+Two of the five — `decode-named-character-reference` and
+`micromark-util-decode-numeric-character-reference` — are declared for
+`src/inline-reference-rule.ts`, which must map a parsed citation back to its own
+source characters to enforce 1#9.11. Both were already installed as transitive
+dependencies of `remark-parse`, so declaring them added nothing to a consumer's
+install; they are the parser's own decoders, which is the point. Inferring what
+a character reference expands to, rather than decoding it, produced a series of
+false errors on ordinary prose.
 
 Do not replace them with third-party packages, and do not add a runtime
 dependency, unless the task is specifically to reconsider that decision. This

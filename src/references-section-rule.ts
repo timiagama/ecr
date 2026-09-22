@@ -27,6 +27,9 @@ import type {
 import { IdentifierGrammar } from './identifier-grammar.js';
 import type { DocIdParseResult, SeparatorValidationResult } from './identifier-grammar.js';
 import type { HeadingNodeData } from './document-identity-rule.js';
+import type { HeadingObstruction } from './heading-source-form.js';
+import { SourceLines } from './source-lines.js';
+import { alignParsedToSource } from './source-alignment.js';
 
 // ---------------------------------------------------------------------------
 // Rule identifier constant
@@ -65,6 +68,39 @@ export interface ListItemNodeData {
    * Positional range of the list item node within the source document.
    * Optional; depends on whether the Markdown parser provides positional metadata.
    */
+  readonly range?: PositionRange;
+
+  /**
+   * The parsed nodes that make up {@link text}, in order, joined to form it.
+   *
+   * Needed to locate the relationship parenthetical in the source. It is
+   * found in the parsed text, and only the parsed text knows which `(` it
+   * is: raw Markdown gains and loses parentheses through character
+   * references, formatting and link destinations, so balancing the source
+   * separately picked a different `(` and judged the wrong one. The segment
+   * holding the parsed `(` says where to look. When absent, as in unit tests
+   * that supply only text, the label's source position is not checked.
+   */
+  readonly segments?: readonly ListItemSegment[];
+}
+
+/**
+ * One parsed node's contribution to a References entry's text.
+ */
+export interface ListItemSegment {
+  /**
+   * How the segment's characters map back to the source: `text` for a parsed
+   * text node, through escapes and character references; `code` for inline
+   * code, whose content is the source between its backtick fences; `other`
+   * for anything else that contributes text, such as the text of HTML, which
+   * is not traced.
+   */
+  readonly kind: 'text' | 'code' | 'other';
+
+  /** The characters the node contributes. */
+  readonly text: string;
+
+  /** The node's position in the source. */
   readonly range?: PositionRange;
 }
 
@@ -142,7 +178,49 @@ export interface ReferencesSectionRuleOptions {
    * and separator validation.
    */
   readonly grammar: IdentifierGrammar;
+
+  /**
+   * The document's raw Markdown, for the References source-form checks of
+   * 1#9.11 rule 4. When absent, as in unit tests that supply only parsed
+   * text, those checks are skipped.
+   */
+  readonly sourceText?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Diagnostic causes (1#9.11 rules 3 and 4, 1#9.6)
+// ---------------------------------------------------------------------------
+
+/** The `data.cause` of a `## References` heading no recipe can find. */
+export const REFERENCES_HEADING_SOURCE_FORM_CAUSE: string = 'references-heading-source-form';
+
+/** The `data.cause` of a References section that is not at the document root. */
+export const REFERENCES_PLACEMENT_CAUSE: string = 'references-placement';
+
+/** The `data.cause` of a References entry the entry recipes cannot find. */
+export const REFERENCES_ENTRY_SOURCE_FORM_CAUSE: string = 'references-entry-source-form';
+
+/** The `data.cause` of an entry whose relationship parenthetical never closes. */
+export const REFERENCES_ENTRY_UNBALANCED_CAUSE: string = 'references-entry-unbalanced';
+
+/**
+ * Where a References entry's relationship parenthetical begins, or why it
+ * cannot be located.
+ */
+type ParentheticalLocation = { readonly open: number } | 'missing' | 'unbalanced';
+
+/**
+ * The start of a References entry as the entry recipe reads it: optional
+ * indentation, a list marker, optional whitespace and an optional `[`. The
+ * target DocID must follow immediately.
+ */
+const ENTRY_LINE_PREFIX: RegExp = /^\s*(?:[-*+]|[0-9]+[.)])\s*\[?/;
+
+/**
+ * What may follow the target DocID on its line, per the entry recipe
+ * `^\s*([-*+]|[0-9]+[.)])\s*\[?8\.1[^0-9.#]`.
+ */
+const AFTER_ENTRY_DOC_ID: RegExp = /^[^0-9.#]/;
 
 // ---------------------------------------------------------------------------
 // Diagnostic severity constant (module-level, non-exported)
@@ -192,6 +270,11 @@ const REFERENCES_HEADING_TEXT: string = 'References';
  * Per 1#9.6, the References heading must be an H2 (depth 2).
  */
 const REFERENCES_HEADING_DEPTH: number = 2;
+
+/**
+ * The References heading's whole source line, exactly (1#9.11 rule 4).
+ */
+const REFERENCES_HEADING_LINE: string = `${'#'.repeat(REFERENCES_HEADING_DEPTH)} ${REFERENCES_HEADING_TEXT}`;
 
 // ---------------------------------------------------------------------------
 // Separator constants
@@ -289,6 +372,17 @@ export class ReferencesSectionRule {
    */
   private readonly encounteredTargetDocIds: Set<DocID>;
 
+  /** The document's source by line; absent when none was supplied. */
+  private readonly sourceLines: SourceLines | undefined;
+
+  /**
+   * Whether the section was found somewhere other than the document root.
+   * Its placement is then the one thing reported: every line of a nested
+   * section starts with its container's prefix, so checking each entry's
+   * source form as well would report the same mistake once per entry.
+   */
+  private sectionMisplaced: boolean;
+
   /**
    * Constructs a new References Section Rule evaluator.
    *
@@ -303,6 +397,58 @@ export class ReferencesSectionRule {
     this.collectedReferences = [];
     this.referencesHeadingCount = 0;
     this.encounteredTargetDocIds = new Set<DocID>();
+    this.sourceLines =
+      options.sourceText === undefined ? undefined : new SourceLines(options.sourceText);
+    this.sectionMisplaced = false;
+  }
+
+  /**
+   * Records where the References section sits, and checks its heading's
+   * source form (1#9.11 rules 3 and 4).
+   *
+   * Called once, by the traversal layer, for the section whose list it then
+   * feeds. A section nested in a blockquote, a list item or any other
+   * container is reported once as misplaced. One at the root has its heading
+   * line checked: it must be `## References` at the start of a line a search
+   * sees, because the recipe that reads a document's references is
+   * `^## References`.
+   *
+   * @param headingRange - Position of the `## References` heading
+   * @param nested - Whether the heading, or the list after it, is not a root child
+   */
+  public evaluateSectionPlacement(headingRange: PositionRange | undefined, nested: boolean): void {
+    if (nested) {
+      this.sectionMisplaced = true;
+      this.collectedDiagnostics.push(
+        this.createDiagnostic(
+          `The References section is nested inside another element. The heading and its ` +
+          `list must both be at the top level of the document, where the recipe ` +
+          `"^## References" finds them; move the section out of its container.`,
+          headingRange,
+          { cause: REFERENCES_PLACEMENT_CAUSE },
+        ),
+      );
+      return;
+    }
+
+    const obstruction: HeadingObstruction | undefined = this.findHeadingObstruction(headingRange);
+
+    if (obstruction !== undefined) {
+      this.collectedDiagnostics.push(
+        this.createDiagnostic(
+          obstruction === 'lone-carriage-return'
+            ? `The References heading follows a lone carriage return (CR) line ending, so ` +
+              `to a search it is the middle of the line before, and "^## References" does ` +
+              `not find it. Save the file with LF or CRLF line endings.`
+            : `The References heading's line is not exactly "## References", so the ` +
+              `recipe "^## References" is not guaranteed to find it. Write two # ` +
+              `characters at the start of the line, one space and the word References, ` +
+              `with nothing else on the line: no formatting, closing hashes or trailing spaces.`,
+          headingRange,
+          { cause: REFERENCES_HEADING_SOURCE_FORM_CAUSE, obstruction },
+        ),
+      );
+    }
   }
 
   /**
@@ -368,8 +514,22 @@ export class ReferencesSectionRule {
     }
 
     // 2. Parse the list item text into components
-    const parsedEntry: ParsedReferenceEntry | undefined =
+    const parsedEntry: ParsedReferenceEntry | 'unbalanced' | undefined =
       this.parseListItemText(text);
+
+    if (parsedEntry === 'unbalanced') {
+      this.collectedDiagnostics.push(
+        this.createDiagnostic(
+          `References entry is malformed: its relationship parenthetical is not balanced. ` +
+          `Matching its final ")" back to an opening "(" never closes, so the direction ` +
+          `and explanation cannot be located. Parentheses must be balanced within ` +
+          `"(direction - explanation)".`,
+          range,
+          { cause: REFERENCES_ENTRY_UNBALANCED_CAUSE },
+        ),
+      );
+      return;
+    }
 
     if (parsedEntry === undefined) {
       const diagnostic: Diagnostic = this.createDiagnostic(
@@ -438,6 +598,18 @@ export class ReferencesSectionRule {
       );
       this.collectedDiagnostics.push(diagnostic);
       return;
+    }
+
+    // 8. Check the entry is where its recipes look (1#9.11 rule 4). Reported,
+    // but the edge is still extracted: withholding it would make every inline
+    // citation of the target undeclared, reporting one mistake many times.
+    const sourceFormDiagnostic: Diagnostic | undefined = this.validateEntrySourceForm(
+      parsedEntry,
+      listItemNodeData,
+    );
+
+    if (sourceFormDiagnostic !== undefined) {
+      this.collectedDiagnostics.push(sourceFormDiagnostic);
     }
 
     // All validations passed -- extract ReferenceEdge
@@ -522,36 +694,46 @@ export class ReferencesSectionRule {
    * Attempts to match the pattern:
    * `TargetDocID <dash> Title " (" Direction <dash> Explanation ")"`
    *
-   * The parsing strategy splits the text at structural boundaries:
-   * 1. Find the last `" ("` to split the title from the parenthetical
-   * 2. Verify the parenthetical ends with `")"`
-   * 3. Within the parenthetical, find `" - "` to split Direction from Explanation
-   * 4. Find the first `" - "` separator to split TargetDocID from the remainder
-   *
-   * The title may contain `" - "` separators (e.g. "3.1 - Scenario Authoring - Prompts & Guardrails"),
-   * so parsing extracts the parenthetical from the end first, then parses the DocID prefix
-   * from the beginning.
+   * The relationship parenthetical is located first, by matching the entry's
+   * final `)` to its opening `(` (1#9.6). Taking the last `" ("` instead read
+   * `defines retries (contract - policy)` as a `contract` edge, and failed
+   * outright on `defines retries (including backoff)`. Within the
+   * parenthetical, the first separator splits Direction from Explanation;
+   * before it, the first separator splits TargetDocID from Title, which may
+   * itself contain separators.
    *
    * @param text - The plain text content of a list item node
-   * @returns The parsed entry if the format is valid, or `undefined` if parsing fails
+   * @returns The parsed entry, `'unbalanced'` when the parenthetical never
+   *          closes, or `undefined` when the entry is otherwise malformed
    */
-  private parseListItemText(text: string): ParsedReferenceEntry | undefined {
-    // Step 1: Find the last " (" to locate the parenthetical portion
-    const lastParenOpenIndex: number = text.lastIndexOf(' (');
+  private parseListItemText(text: string): ParsedReferenceEntry | 'unbalanced' | undefined {
+    const entry: string = text.trimEnd();
+    const location: ParentheticalLocation =
+      ReferencesSectionRule.locateRelationshipParenthetical(entry);
 
-    if (lastParenOpenIndex < 0) {
+    if (location === 'unbalanced') {
+      return 'unbalanced';
+    }
+
+    if (location === 'missing') {
       return undefined;
     }
 
-    // Step 2: Verify the text ends with ")"
-    if (!text.endsWith(')')) {
+    // Markdown renders any whitespace before the "(" as a space, including a
+    // line break; whether the label shares the marker's source line is the
+    // source-form check's question, not the parser's.
+    const prefixWithGap: string = entry.substring(0, location.open);
+
+    if (!/\s$/.test(prefixWithGap)) {
       return undefined;
     }
 
-    // Extract the parenthetical content (between " (" and final ")")
-    const parentheticalContent: string = text.substring(
-      lastParenOpenIndex + 2,
-      text.length - 1,
+    const lastParenOpenIndex: number = prefixWithGap.trimEnd().length;
+
+    // Extract the parenthetical content (between "(" and the final ")")
+    const parentheticalContent: string = entry.substring(
+      location.open + 1,
+      entry.length - 1,
     );
 
     // Step 3: Split the parenthetical on " - " to get Direction and Explanation
@@ -574,7 +756,7 @@ export class ReferencesSectionRule {
     );
 
     // Step 4: Extract the prefix portion (before the parenthetical)
-    const prefixPortion: string = text.substring(0, lastParenOpenIndex);
+    const prefixPortion: string = entry.substring(0, lastParenOpenIndex);
 
     // Step 5: Find the first " - " in the prefix to split DocID from Title
     const prefixMatch: RegExpExecArray | null = SEPARATOR_PATTERN.exec(prefixPortion);
@@ -599,6 +781,291 @@ export class ReferencesSectionRule {
       direction: directionCandidate as ReferenceDirection,
       explanation: explanationCandidate,
     };
+  }
+
+  /**
+   * Maps an offset in a segment's parsed text to its offset in the segment's
+   * source, by the rule for the segment's kind.
+   *
+   * @param segment - A `text` or `code` segment
+   * @param source - The segment's source
+   * @param offset - An offset within its parsed text
+   * @returns The corresponding source offset, or `undefined` when a text
+   *          segment could not be aligned
+   */
+  private static locateInSegmentSource(
+    segment: ListItemSegment,
+    source: string,
+    offset: number,
+  ): number | undefined {
+    if (segment.kind === 'code') {
+      return ReferencesSectionRule.locateInCodeSource(source, offset);
+    }
+
+    return alignParsedToSource(source, segment.text)?.[offset];
+  }
+
+  /**
+   * Maps an offset in an inline code span's content to its source.
+   *
+   * Code content takes no escapes or character references, so it is the
+   * source between the backtick fences, with one exception: when it both
+   * begins and ends with a space, one space is stripped from each side.
+   *
+   * @param source - The code span's source, fences included
+   * @param offset - An offset within its parsed content
+   * @returns The corresponding source offset
+   */
+  private static locateInCodeSource(source: string, offset: number): number {
+    const fence: number = /^`+/.exec(source)?.[0].length ?? 0;
+    const inner: string = source.slice(fence, source.length - fence);
+    const stripped: boolean =
+      inner.length >= 2 && /^[ \r\n]/.test(inner) && /[ \r\n]$/.test(inner) && inner.trim() !== '';
+
+    return fence + (stripped ? 1 : 0) + offset;
+  }
+
+  /**
+   * Finds what, if anything, keeps `^## References` from finding the heading.
+   *
+   * The line must be `## References` exactly (1#9.11 rule 4). The check that
+   * numbered headings share allows anything after the identifier, since a
+   * title follows it; that let `## References ##` and trailing spaces pass
+   * here, where the specification allows nothing.
+   *
+   * @param headingRange - Position of the `## References` heading
+   * @returns The obstruction, or `undefined` when the heading is findable
+   */
+  private findHeadingObstruction(
+    headingRange: PositionRange | undefined,
+  ): HeadingObstruction | undefined {
+    if (this.sourceLines === undefined || headingRange === undefined) {
+      return undefined;
+    }
+
+    const lineNumber: number = headingRange.start.line;
+
+    if (this.sourceLines.readLine(lineNumber) !== REFERENCES_HEADING_LINE) {
+      return 'form';
+    }
+
+    return this.sourceLines.tellStartsSearchLine(lineNumber) ? undefined : 'lone-carriage-return';
+  }
+
+  /**
+   * Locates an entry's relationship parenthetical by matching its final `)`
+   * to the `(` that opens it, scanning right to left and counting depth
+   * (1#9.6). The explanation may then hold parentheses of its own, and the
+   * title may hold unmatched ones, without either being mistaken for it.
+   *
+   * @param entry - The entry's text, without trailing whitespace
+   * @returns The opening `(`'s index; `'missing'` when the entry does not end
+   *          with `)`; `'unbalanced'` when the final `)` is never matched
+   */
+  private static locateRelationshipParenthetical(entry: string): ParentheticalLocation {
+    if (!entry.endsWith(')')) {
+      return 'missing';
+    }
+
+    let depth: number = 0;
+
+    for (let index: number = entry.length - 1; index >= 0; index -= 1) {
+      const character: string = entry.charAt(index);
+
+      if (character === ')') {
+        depth += 1;
+      } else if (character === '(') {
+        depth -= 1;
+
+        if (depth === 0) {
+          return { open: index };
+        }
+      }
+    }
+
+    return 'unbalanced';
+  }
+
+  /**
+   * Checks that an entry is where the References recipes look (1#9.11 rule 4).
+   *
+   * The entry recipe `^\s*([-*+]|[0-9]+[.)])\s*\[?8\.1[^0-9.#]` and the
+   * direction recipe, which adds `.*\(authority`, each read one line. So the
+   * list marker, the target DocID in literal characters and the direction
+   * label must all be on the entry's first line, and that line must be a
+   * line to a search engine. The explanation may wrap freely after the label.
+   *
+   * @param entry - The parsed entry
+   * @param item - The list item the entry was parsed from
+   * @returns A diagnostic when a recipe cannot find the entry, or `undefined`
+   */
+  private validateEntrySourceForm(
+    entry: ParsedReferenceEntry,
+    item: ListItemNodeData,
+  ): Diagnostic | undefined {
+    const range: PositionRange | undefined = item.range;
+
+    if (this.sourceLines === undefined || range === undefined || this.sectionMisplaced) {
+      return undefined;
+    }
+
+    const lineNumber: number = range.start.line;
+    const line: string = this.sourceLines.readLine(lineNumber) ?? '';
+    const data: Readonly<Record<string, unknown>> = {
+      cause: REFERENCES_ENTRY_SOURCE_FORM_CAUSE,
+      targetDocId: entry.targetDocId,
+    };
+
+    if (
+      !ReferencesSectionRule.tellEntryLineMatches(line, entry) ||
+      !this.tellLabelOpensFirstLineParenthetical(item, line, entry)
+    ) {
+      return this.createDiagnostic(
+        `The References entry for "${entry.targetDocId}" is not written as the entry ` +
+        `recipes read it, so they do not find it. The list marker, the target DocID in ` +
+        `literal characters and the direction label must all be on one line -- ` +
+        `"- ${entry.targetDocId} - Title (${entry.direction} - ...)" -- without ` +
+        `formatting on the DocID. The explanation may continue on later lines.`,
+        range,
+        { ...data, obstruction: 'form' },
+      );
+    }
+
+    if (!this.sourceLines.tellStartsSearchLine(lineNumber)) {
+      return this.createDiagnostic(
+        `The References entry for "${entry.targetDocId}" follows a lone carriage return ` +
+        `(CR) line ending, so to a search it is the middle of the line before, and the ` +
+        `entry recipes do not find it. Save the file with LF or CRLF line endings.`,
+        range,
+        { ...data, obstruction: 'lone-carriage-return' },
+      );
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Reports whether an entry's first line begins as the entry recipe expects:
+   * a list marker, then the target DocID in literal characters.
+   *
+   * @param line - The list item's first source line
+   * @param entry - The parsed entry
+   * @returns `true` when the entry recipe matches the line's start
+   */
+  private static tellEntryLineMatches(line: string, entry: ParsedReferenceEntry): boolean {
+    const prefix: RegExpExecArray | null = ENTRY_LINE_PREFIX.exec(line);
+
+    if (prefix === null) {
+      return false;
+    }
+
+    const rest: string = line.slice(prefix[0].length);
+
+    return (
+      rest.startsWith(entry.targetDocId) &&
+      AFTER_ENTRY_DOC_ID.test(rest.slice(entry.targetDocId.length))
+    );
+  }
+
+  /**
+   * Reports whether the entry's own relationship parenthetical opens on its
+   * first line, with the direction label written literally after the `(`.
+   *
+   * The `(` is the one the parser chose: found in the parsed entry by
+   * matching its final `)`, then traced to the source through the parsed
+   * text node that holds it. Two shortcuts both failed. Asking whether
+   * `(dependency` occurred anywhere on the line let a title such as
+   * `Target (dependency graph)` answer for a formatted label. Balancing the
+   * raw source separately picked a different `(` whenever markup added or
+   * removed a parenthesis -- `&#40;`, `**(…)**`, a link destination holding
+   * `)` -- rejecting valid entries and, in one case, excusing an invalid one.
+   *
+   * @param item - The list item, with its parsed segments
+   * @param line - The list item's first source line
+   * @param entry - The parsed entry
+   * @returns `true` when the label follows the entry's own `(` on its first line
+   */
+  private tellLabelOpensFirstLineParenthetical(
+    item: ListItemNodeData,
+    line: string,
+    entry: ParsedReferenceEntry,
+  ): boolean {
+    if (item.segments === undefined || item.range === undefined || this.sourceLines === undefined) {
+      return true;
+    }
+
+    const location: ParentheticalLocation =
+      ReferencesSectionRule.locateRelationshipParenthetical(item.text.trimEnd());
+
+    if (typeof location === 'string') {
+      return false;
+    }
+
+    const label: string = `(${entry.direction}`;
+    let segmentStart: number = 0;
+
+    for (const segment of item.segments) {
+      const segmentEnd: number = segmentStart + segment.text.length;
+
+      if (location.open < segmentEnd) {
+        // The `(` and the whole label must come from one node. A label split
+        // by formatting or a code fence -- `(**dependency**` or
+        // ``(`dependency` `` -- is not literal text after the `(`. Inline
+        // code holding the whole parenthetical is: 1#9.5 keeps citations out
+        // of code, but no rule keeps References entries out of it, and both
+        // recipes find `` `(dependency - x)` ``.
+        if (segment.kind === 'other' || location.open + label.length > segmentEnd) {
+          return false;
+        }
+
+        return this.tellSegmentHoldsLiteralLabel(
+          segment,
+          location.open - segmentStart,
+          label,
+          item.range.start.line,
+          line,
+        );
+      }
+
+      segmentStart = segmentEnd;
+    }
+
+    return false;
+  }
+
+  /**
+   * Traces a parsed `(` to the source through its text node, and checks that
+   * the label follows it literally on the entry's first line.
+   *
+   * @param segment - The text segment holding the `(`
+   * @param offset - The `(`'s offset within the segment's parsed text
+   * @param label - `(` followed by the direction label
+   * @param firstLine - The entry's first line number
+   * @param line - That line's text
+   * @returns `true` when the source holds the label there, on that line
+   */
+  private tellSegmentHoldsLiteralLabel(
+    segment: ListItemSegment,
+    offset: number,
+    label: string,
+    firstLine: number,
+    line: string,
+  ): boolean {
+    if (segment.range === undefined || this.sourceLines === undefined) {
+      return false;
+    }
+
+    const source: string | undefined = this.sourceLines.slice(segment.range);
+    const at: number | undefined =
+      source === undefined ? undefined : ReferencesSectionRule.locateInSegmentSource(segment, source, offset);
+    const segmentStart: number | undefined = this.sourceLines.offsetOf(segment.range.start);
+    const lineStart: number | undefined = this.sourceLines.offsetOf({ line: firstLine, character: 0 });
+
+    if (source === undefined || at === undefined || segmentStart === undefined || lineStart === undefined) {
+      return false;
+    }
+
+    return source.startsWith(label, at) && segmentStart + at < lineStart + line.length;
   }
 
   /**
@@ -653,11 +1120,13 @@ export class ReferencesSectionRule {
    *
    * @param message - Human-readable description of the issue
    * @param range - Optional positional range within the source document
+   * @param data - Optional machine-readable detail, such as a `cause`
    * @returns A fully populated diagnostic object
    */
   private createDiagnostic(
     message: string,
     range?: PositionRange,
+    data?: Readonly<Record<string, unknown>>,
   ): Diagnostic {
     const diagnostic: Diagnostic = {
       ruleId: REFERENCES_SECTION_RULE_ID,
@@ -665,6 +1134,7 @@ export class ReferencesSectionRule {
       message,
       uri: this.uri,
       ...(range !== undefined ? { range } : {}),
+      ...(data !== undefined ? { data } : {}),
     };
 
     return diagnostic;

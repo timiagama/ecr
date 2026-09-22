@@ -7,7 +7,11 @@ import type {
   ExtractedDocument,
   SectionID,
 } from './types.js';
-import { INLINE_REFERENCE_RULE_ID, UNDECLARED_TARGET_REASON } from './inline-reference-rule.js';
+import {
+  CITATION_SOURCE_FORM_CAUSE,
+  INLINE_REFERENCE_RULE_ID,
+  UNDECLARED_TARGET_REASON,
+} from './inline-reference-rule.js';
 
 // ---------------------------------------------------------------------------
 // Internal helper types
@@ -517,17 +521,31 @@ class CorpusValidator {
         }
 
         const targetId: unknown = warning.data.targetId;
+        const cause: unknown = warning.data.cause;
+
+        // A citation no search can find (1#9.5 rule 4) warns for the same
+        // reason an undeclared one does, and is raised here for the same
+        // reason. Declaring the target would not make it findable, so the
+        // message has to name the source form as well. Only an undeclared
+        // target ever warns, so both parts always apply.
+        const message: string =
+          cause === CITATION_SOURCE_FORM_CAUSE
+            ? `Inline reference to '${String(targetId)}' is not written as adjacent literal ` +
+              `text on one line, so no search finds it, and DocID '${targetDocId}' exists in ` +
+              `the corpus, so it is certainly a citation — write it as literal text and ` +
+              `declare it in the References section`
+            : `Inline reference to '${String(targetId)}' targets DocID '${targetDocId}', ` +
+              `which exists in the corpus but is not declared — declare it in the References section`;
 
         accumulator.items.push({
           severity: 'error',
           ruleId: 'corpus/undeclared-inline-target',
-          message:
-            `Inline reference to '${String(targetId)}' targets DocID '${targetDocId}', ` +
-            `which exists in the corpus but is not declared — declare it in the References section`,
+          message,
           uri: entry.uri,
           ...(warning.range !== undefined ? { range: warning.range } : {}),
           ...(entry.result.extracted !== undefined ? { docId: entry.result.extracted.docId } : {}),
           data: {
+            ...(cause !== undefined ? { cause } : {}),
             targetId,
             parentDocId: targetDocId,
             fromId: warning.data.fromId,

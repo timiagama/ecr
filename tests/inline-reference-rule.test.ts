@@ -40,6 +40,11 @@ function createRule(overrides?: Partial<InlineReferenceRuleOptions>): InlineRefe
     docId: '5.1',
     grammar: new IdentifierGrammar(),
     declaredDocIds: new Set<DocID>(['3.1', '8.1']),
+    // These scenarios supply text nodes without positional ranges, so the
+    // source-form check of 1#9.11 has nothing to locate and is skipped. Cases
+    // that exercise source form live in navigation-guarantee.test.ts, where
+    // whole documents are parsed and ranges are real.
+    sourceText: '',
   };
   return new InlineReferenceRule({ ...defaults, ...overrides });
 }

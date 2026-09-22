@@ -17,6 +17,8 @@ import type {
   SeparatorValidationResult,
 } from './identifier-grammar.js';
 import { IdentifierGrammar } from './identifier-grammar.js';
+import { HEADING_SOURCE_FORM_CAUSE, HeadingSourceForm } from './heading-source-form.js';
+import type { HeadingObstruction } from './heading-source-form.js';
 
 // ---------------------------------------------------------------------------
 // Rule identifier constant
@@ -103,6 +105,12 @@ export interface DocumentIdentityRuleOptions {
    * and separator validation.
    */
   readonly grammar: IdentifierGrammar;
+  /**
+   * The document's raw Markdown, for the heading source-form check of 1#9.11
+   * rule 1. When absent, as in unit tests that supply only parsed heading
+   * text, the check is skipped.
+   */
+  readonly sourceText?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +183,9 @@ export class DocumentIdentityRule {
   /** All H1 headings encountered during evaluation, in traversal order. */
   private readonly collectedH1Headings: CollectedH1Heading[];
 
+  /** Checks the H1's source line against the document recipe. */
+  private readonly headingSourceForm: HeadingSourceForm;
+
   /**
    * Constructs a new Document Identity Rule evaluator.
    *
@@ -184,6 +195,7 @@ export class DocumentIdentityRule {
     this.uri = options.uri;
     this.grammar = options.grammar;
     this.collectedH1Headings = [];
+    this.headingSourceForm = new HeadingSourceForm(options.sourceText);
   }
 
   /**
@@ -313,6 +325,30 @@ export class DocumentIdentityRule {
       ...(heading.range !== undefined ? { range: heading.range } : {}),
     };
 
+    // An H1 no recipe can find is reported, but its identity is still
+    // established. Withholding it would skip every other rule for the
+    // document and turn each citation of it elsewhere into an unresolved
+    // target -- one mistake reported many times over. The document fails
+    // either way, and the guarantee covers only corpora that pass.
+    const obstruction: HeadingObstruction | undefined = this.headingSourceForm.findObstruction(
+      heading.range,
+      1,
+      identity.docId,
+    );
+
+    if (obstruction !== undefined) {
+      return {
+        diagnostics: [
+          this.createDiagnostic(
+            HeadingSourceForm.explain(obstruction, 1, identity.docId),
+            heading.range,
+            { cause: HEADING_SOURCE_FORM_CAUSE, obstruction, docId: identity.docId },
+          ),
+        ],
+        identity,
+      };
+    }
+
     return { diagnostics: [], identity };
   }
 
@@ -364,11 +400,13 @@ export class DocumentIdentityRule {
    *
    * @param message - Human-readable description of the issue
    * @param range - Optional positional range of the heading within the source document
+   * @param data - Optional machine-readable detail, such as a `cause`
    * @returns A fully populated diagnostic object
    */
   private createDiagnostic(
     message: string,
     range?: PositionRange,
+    data?: Readonly<Record<string, unknown>>,
   ): Diagnostic {
     const diagnostic: Diagnostic = {
       ruleId: DOCUMENT_IDENTITY_RULE_ID,
@@ -376,6 +414,7 @@ export class DocumentIdentityRule {
       message,
       uri: this.uri,
       ...(range !== undefined ? { range } : {}),
+      ...(data !== undefined ? { data } : {}),
     };
 
     return diagnostic;

@@ -908,22 +908,58 @@ describe('Feature: A reference whose identifier is wrapped in formatting is repo
     ].join('\n'));
   }
 
+  // Severity here follows 1#9.5 rule 4, which ECR 2.0.0 aligned with rule 3:
+  // an identifiable target -- a SectionID, or a DocID the document declares --
+  // was certainly meant as a citation, so an unfindable one is an error. Only
+  // a bare number naming nothing known stays a warning, because emphasised
+  // prose cannot be told from a citation someone set in italics.
+  //
+  // Before 2.0.0 every wrapped reference warned. That is why `See *8.1*` below
+  // is now an error: this document declares 8.1 in its References section.
   it.each([
     { form: 'a link', paragraph: 'Retries follow, see [8.1#3](./8.1.md).', wrapper: 'link', kind: 'see' },
     { form: 'bold text', paragraph: 'Retries apply per **8.1#3**.', wrapper: 'strong', kind: 'per' },
     { form: 'italic text', paragraph: 'See *8.1* for details.', wrapper: 'emphasis', kind: 'see' },
-  ])('warns when the identifier is inside $form, and extracts no edge', ({ paragraph, wrapper, kind }) => {
+  ])('rejects an identifiable target inside $form, and extracts no edge', ({ paragraph, wrapper, kind }) => {
     const result: LintResult = lintParagraph(paragraph);
-    const warnings: readonly Diagnostic[] = result.diagnostics.filter(
+    const reported: readonly Diagnostic[] = result.diagnostics.filter(
       (diagnostic: Diagnostic) => diagnostic.ruleId === 'ECR104',
     );
 
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]!.severity).toBe('warning');
-    expect(warnings[0]!.data).toMatchObject({ reason: 'wrapped-reference', wrapper, kind });
-    expect(warnings[0]!.range?.start.line).toBe(4);
+    expect(reported).toHaveLength(1);
+    expect(reported[0]!.severity).toBe('error');
+    expect(reported[0]!.data).toMatchObject({ cause: 'citation-source-form', wrapper, kind });
+    expect(reported[0]!.message).toContain('literal');
+    expect(reported[0]!.range?.start.line).toBe(4);
+    expect(result.ok).toBe(false);
+    expect(result.extracted!.inlineReferences).toEqual([]);
+  });
+
+  it('warns rather than fails when the wrapped target names nothing known', () => {
+    const result: LintResult = lintParagraph('See *99* for details.');
+    const reported: readonly Diagnostic[] = result.diagnostics.filter(
+      (diagnostic: Diagnostic) => diagnostic.ruleId === 'ECR104',
+    );
+
+    expect(reported).toHaveLength(1);
+    expect(reported[0]!.severity).toBe('warning');
     expect(result.ok).toBe(true);
     expect(result.extracted!.inlineReferences).toEqual([]);
+  });
+
+  // A wrapped citation belongs to the section it is written in, as a plain one
+  // does. It was attributed to the document instead, and the corpus error
+  // raised from it inherited the same wrong origin.
+  it.each([
+    { form: 'a plain citation', paragraph: 'See 99 for details.' },
+    { form: 'a wrapped citation', paragraph: 'See *99* for details.' },
+  ])('attributes $form to the section it appears in', ({ paragraph }) => {
+    const reported: readonly Diagnostic[] = lintParagraph(paragraph).diagnostics.filter(
+      (diagnostic: Diagnostic) => diagnostic.ruleId === 'ECR104',
+    );
+
+    expect(reported).toHaveLength(1);
+    expect(reported[0]!.data).toMatchObject({ fromId: '5.1#1' });
   });
 
   it.each([

@@ -150,11 +150,11 @@ matches references to sections of document `8.1`, **and** references to document
 
 | Question | Pattern |
 |---|---|
-| Who references document `8.1`? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1(\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
-| Who references any section of `8.1`? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1#" docs` |
-| Who references section `8.1#3` or below? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1#3\b" docs` |
-| Either the document or any section? | `rg -n "\b([Ss]ee\|[Pp]er) 8\.1(#[0-9.]*\|\.[^0-9]\|\.$\|[^0-9.#]\|$)" docs` |
-| Every section-precise reference in the corpus | `rg -n "\b([Ss]ee\|[Pp]er) [0-9.]+#" docs` |
+| Who references document `8.1`? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1(\.[^0-9A-Za-z.#]\|\.$\|[^0-9A-Za-z.#]\|$)" docs` |
+| Who references any section of `8.1`? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1#" docs` |
+| Who references section `8.1#3` or below? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1#3([^0-9A-Za-z#]\|$)" docs` |
+| Either the document or any section? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1(#[0-9.]*\|\.[^0-9A-Za-z.#]\|\.$\|[^0-9A-Za-z.#]\|$)" docs` |
+| Every section-precise reference in the corpus | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) [0-9.]+#" docs` |
 
 The last row is not expressible without the separator.
 
@@ -163,14 +163,22 @@ start of a sentence is still a reference. These rows are the same patterns the
 navigation protocol publishes, where they are tested against the example corpus;
 change them there first.
 
-### 3#5.1 - Why the document-only patterns carry a trailing group
+### 3#5.1 - Why the patterns bound a citation explicitly
 
 `\b` cannot terminate an identifier, because `.` and `#` are both non-word
 characters: a search for `8\.1\b` matches inside `8.1.3`, `8.1#3` and `8.1.3#1`.
 The trailing group states explicitly what may follow a bare DocID — anything
-that is not a digit, a dot introducing a digit, or `#`. The `\.[^0-9]` and `\.$`
-alternatives admit a sentence-ending full stop, so `see 8.1.` is matched while
-`see 8.1.3` is not.
+that is not an ASCII letter or digit, `.` or `#`. The `\.[^0-9A-Za-z.#]` and
+`\.$` alternatives admit a sentence-ending full stop, so `see 8.1.` is matched
+while `see 8.1.3` and `see 8.1..2` are not.
+
+Before the keyword, `\b` alone is not enough either. `_` is a word character to
+both engines, so `\b` finds nothing in `_see 8.1_`, which is ordinary Markdown
+emphasis. The leading group is therefore `(\b|_)`: a word boundary, or an
+underscore. It still refuses `oversee 8.1`. It was chosen over "any character
+but an ASCII letter or digit" by measurement: that class is not matched against
+a character outside the Basic Multilingual Plane by at least one GNU grep, so
+`🔒see 8.1` would have been missed.
 
 This is a pre-existing property of dotted identifiers, not a consequence of this
 separator; a dotted-only grammar has the same defect and silently conflates a
@@ -181,7 +189,7 @@ both sentence-final and mid-sentence positions.
 Where ripgrep is built with PCRE2, `-P` permits the clearer lookahead form:
 
 ```bash
-rg -P -n "\b([Ss]ee|[Pp]er) 8\.1(?!#)(?![0-9])(?!\.[0-9])" docs
+rg -P -n "(?<![0-9A-Za-z])([Ss]ee|[Pp]er) 8\.1(?![0-9A-Za-z#])(?!\.[0-9A-Za-z.#])" docs
 ```
 
 The default-engine patterns are given as the primary form because they need no

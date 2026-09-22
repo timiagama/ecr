@@ -44,6 +44,7 @@ export type {
 export { ReferencesSectionRule, REFERENCES_SECTION_RULE_ID } from "./references-section-rule.js";
 export type {
   ListItemNodeData,
+  ListItemSegment,
   ParsedReferenceEntry,
   ReferencesSectionRuleResult,
   ReferencesSectionRuleOptions,
@@ -52,6 +53,8 @@ export type {
 export { InlineReferenceRule, INLINE_REFERENCE_RULE_ID } from "./inline-reference-rule.js";
 export type {
   TextNodeData,
+  InlineSegment,
+  InlineSegmentKind,
   DetectedInlineReference,
   InlineReferenceRuleResult,
   InlineReferenceRuleOptions,
