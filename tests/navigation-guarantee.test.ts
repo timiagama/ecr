@@ -236,7 +236,7 @@ describe('Feature: the search engines named by the protocol are the ones tested'
 
   it('publishes no PCRE-only construct outside the recipe marked -P', () => {
     const offenders: string[] = PROTOCOL_TEXT.split(/\r?\n/)
-      .filter((line: string): boolean => line.includes('rg ') && !line.includes('rg -P'))
+      .filter((line: string): boolean => line.includes('rg ') && !/\brg\b[^"]*\s-P\s/.test(line))
       .filter((line: string): boolean => /\(\?[:=!<]/.test(line));
 
     expect(

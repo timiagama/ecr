@@ -132,3 +132,31 @@ describe('Feature: Project-specific documents are excluded by ignore pattern', (
     ).toBe(false);
   });
 });
+
+describe('Feature: A directory is excluded whole only when every path beneath it would be', () => {
+  it.each([
+    { pattern: 'vendor/**', directory: 'vendor', excluded: true },
+    { pattern: 'vendor/**', directory: 'vendors', excluded: false },
+    { pattern: 'vendor/**', directory: 'docs/vendor', excluded: false },
+    { pattern: 'vendor/**', directory: 'vendor/lib', excluded: false },
+    { pattern: '**/drafts/**', directory: 'drafts', excluded: true },
+    { pattern: '**/drafts/**', directory: 'a/b/drafts', excluded: true },
+    { pattern: 'archive-*/**', directory: 'archive-2024', excluded: true },
+    { pattern: '**', directory: 'anything', excluded: true },
+    // `vendor/*` excludes only the files directly in `vendor`, so `vendor`
+    // must still be walked for `vendor/a/b.md`.
+    { pattern: 'vendor/*', directory: 'vendor', excluded: false },
+    { pattern: 'vendor', directory: 'vendor', excluded: false },
+    { pattern: '**/*.md', directory: 'notes.md', excluded: false },
+  ])('$pattern excludes directory $directory: $excluded', ({ pattern, directory, excluded }) => {
+    expect(new MetaDocumentFilter([pattern]).excludesDirectory(directory)).toBe(excluded);
+  });
+
+  it('agrees with the file patterns: whatever it excludes whole, they exclude file by file', () => {
+    const filter: MetaDocumentFilter = new MetaDocumentFilter(['vendor/**', '**/drafts/**']);
+
+    for (const path of ['vendor/x.md', 'vendor/a/b/x.md', 'drafts/x.md', 'a/drafts/b/x.md']) {
+      expect(filter.shouldExclude(path), path).toBe(true);
+    }
+  });
+});

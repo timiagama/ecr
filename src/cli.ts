@@ -25,7 +25,7 @@ import { Ecr } from './ecr.js';
 import { ECR_SPEC_VERSION } from './spec-version.js';
 import type { CorpusResult } from './types.js';
 import { CorpusLoader } from './cli/corpus-loader.js';
-import type { LoadedCorpus } from './cli/corpus-loader.js';
+import type { LoadedCorpus, UnreadablePath } from './cli/corpus-loader.js';
 import { CorpusStatistics } from './cli/corpus-statistics.js';
 import { DiagnosticReporter } from './cli/diagnostic-reporter.js';
 import type { ReportFormat } from './cli/diagnostic-reporter.js';
@@ -84,7 +84,10 @@ const EXIT_SUCCESS: number = 0;
 /** Process exit code signalling that the corpus contains errors. */
 const EXIT_VALIDATION_FAILED: number = 1;
 
-/** Process exit code signalling that the command line could not be understood. */
+/**
+ * Process exit code signalling that the command could not run: arguments it
+ * could not understand, or a corpus it could not find or fully read.
+ */
 const EXIT_USAGE_ERROR: number = 2;
 
 /** Filename the navigation protocol is written as by `init`. */
@@ -112,7 +115,7 @@ const USAGE_TEXT: string = `
   Exit codes
     0  no errors
     1  the corpus contains errors
-    2  the command line could not be understood
+    2  the command could not run
 `;
 
 /**
@@ -300,8 +303,27 @@ export class EcrCommandLine {
     const loader: CorpusLoader = new CorpusLoader(corpusRoot, parsed.ignorePatterns);
     const loaded: LoadedCorpus = loader.load();
 
+    // A corpus that was not fully read cannot pass or be summarised, so the
+    // command cannot run; the walk still finished, so every such path is named.
+    if (loaded.unreadablePaths.length > 0) {
+      return this.fail(
+        '  Could not read:\n' +
+        loaded.unreadablePaths.map((unreadable: UnreadablePath): string =>
+          `    ${unreadable.path} (${unreadable.reason})\n`,
+        ).join('') +
+        '  Fix these paths, or exclude them with --ignore.\n',
+      );
+    }
+
     if (loaded.documents.length === 0) {
-      return this.fail(`  No Markdown documents found in ${displayedRoot}\n`);
+      // Links are the likeliest reason a directory of documents yields none.
+      const links: readonly string[] = DiagnosticReporter.listNotFollowed(loaded.notFollowedPaths);
+
+      return this.fail(
+        `  No Markdown documents found in ${displayedRoot}\n` +
+        links.map((line: string): string => `${line}\n`).join('') +
+        (links.length > 0 ? '  Links are not followed, because `rg` and `grep -r` do not follow them either.\n' : ''),
+      );
     }
 
     const corpusResult: CorpusResult = new Ecr().validateCorpus(loaded.documents);
@@ -309,10 +331,14 @@ export class EcrCommandLine {
 
     if (parsed.command === 'stats') {
       const statistics: CorpusStatistics = new CorpusStatistics(corpusResult);
-      return this.succeed(reporter.reportStatistics(statistics.summarise()));
+      return this.succeed(reporter.reportStatistics(statistics.summarise(), loaded.notFollowedPaths));
     }
 
-    const output: string = reporter.reportValidation(corpusResult, loaded.excludedPaths);
+    const output: string = reporter.reportValidation(
+      corpusResult,
+      loaded.excludedPaths,
+      loaded.notFollowedPaths,
+    );
     const hasErrors: boolean = this.tellCorpusHasErrors(corpusResult);
 
     // A report of a failing corpus is still the command's result, so it goes

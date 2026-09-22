@@ -150,11 +150,11 @@ matches references to sections of document `8.1`, **and** references to document
 
 | Question | Pattern |
 |---|---|
-| Who references document `8.1`? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1(\.[^0-9A-Za-z.#]\|\.$\|[^0-9A-Za-z.#]\|$)" docs` |
-| Who references any section of `8.1`? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1#" docs` |
-| Who references section `8.1#3` or below? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1#3([^0-9A-Za-z#]\|$)" docs` |
-| Either the document or any section? | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1(#[0-9.]*\|\.[^0-9A-Za-z.#]\|\.$\|[^0-9A-Za-z.#]\|$)" docs` |
-| Every section-precise reference in the corpus | `rg -n "(\b\|_)([Ss]ee\|[Pp]er) [0-9.]+#" docs` |
+| Who references document `8.1`? | `rg --no-ignore -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1(\.[^0-9A-Za-z.#]\|\.$\|[^0-9A-Za-z.#]\|$)" docs` |
+| Who references any section of `8.1`? | `rg --no-ignore -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1#" docs` |
+| Who references section `8.1#3` or below? | `rg --no-ignore -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1#3([^0-9A-Za-z#]\|$)" docs` |
+| Either the document or any section? | `rg --no-ignore -n "(\b\|_)([Ss]ee\|[Pp]er) 8\.1(#[0-9.]*\|\.[^0-9A-Za-z.#]\|\.$\|[^0-9A-Za-z.#]\|$)" docs` |
+| Every section-precise reference in the corpus | `rg --no-ignore -n "(\b\|_)([Ss]ee\|[Pp]er) [0-9.]+#" docs` |
 
 The last row is not expressible without the separator.
 
@@ -189,7 +189,7 @@ both sentence-final and mid-sentence positions.
 Where ripgrep is built with PCRE2, `-P` permits the clearer lookahead form:
 
 ```bash
-rg -P -n "(?<![0-9A-Za-z])([Ss]ee|[Pp]er) 8\.1(?![0-9A-Za-z#])(?!\.[0-9A-Za-z.#])" docs
+rg --no-ignore -P -n "(?<![0-9A-Za-z])([Ss]ee|[Pp]er) 8\.1(?![0-9A-Za-z#])(?!\.[0-9A-Za-z.#])" docs
 ```
 
 The default-engine patterns are given as the primary form because they need no

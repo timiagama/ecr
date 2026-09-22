@@ -55,6 +55,12 @@ export class MetaDocumentFilter {
   private readonly ignorePatterns: readonly RegExp[];
 
   /**
+   * Compiled directory parts of the ignore patterns that exclude everything
+   * beneath a directory: those ending in slash-double-star, and `**` itself.
+   */
+  private readonly ignoredDirectoryPatterns: readonly RegExp[];
+
+  /**
    * Creates a filter.
    *
    * @param ignorePatterns - Additional glob patterns to exclude, matched against the corpus-relative path
@@ -70,6 +76,10 @@ export class MetaDocumentFilter {
     this.ignorePatterns = ignorePatterns.map((pattern: string): RegExp =>
       MetaDocumentFilter.compileGlob(pattern),
     );
+    this.ignoredDirectoryPatterns = ignorePatterns
+      .map((pattern: string): string | undefined => MetaDocumentFilter.readIgnoredDirectory(pattern))
+      .filter((directory: string | undefined): directory is string => directory !== undefined)
+      .map((directory: string): RegExp => MetaDocumentFilter.compileGlob(directory));
   }
 
   /**
@@ -111,6 +121,38 @@ export class MetaDocumentFilter {
     return this.ignorePatterns.some((pattern: RegExp): boolean =>
       pattern.test(corpusRelativePath),
     );
+  }
+
+  /**
+   * Determines whether an ignore pattern excludes every path beneath a
+   * directory, so that the directory need not be walked at all.
+   *
+   * Only a pattern ending in slash-double-star (or `**` alone) says so: `vendor/**`
+   * excludes all of `vendor`, but `vendor/*` excludes only the files directly
+   * inside it, so `vendor` must still be walked for `vendor/a/b.md`.
+   *
+   * @param corpusRelativeDirectory - The directory's path relative to the corpus root, using forward slashes, without a trailing slash
+   * @returns `true` when no path beneath the directory could be included
+   */
+  public excludesDirectory(corpusRelativeDirectory: string): boolean {
+    return this.ignoredDirectoryPatterns.some((pattern: RegExp): boolean =>
+      pattern.test(corpusRelativeDirectory),
+    );
+  }
+
+  /**
+   * Reads the directory part of an ignore pattern that excludes a whole
+   * directory.
+   *
+   * @param pattern - An ignore pattern
+   * @returns The pattern for the excluded directories, or `undefined` when the pattern does not exclude whole directories
+   */
+  private static readIgnoredDirectory(pattern: string): string | undefined {
+    if (pattern === '**') {
+      return pattern;
+    }
+
+    return pattern.endsWith('/**') ? pattern.slice(0, -'/**'.length) : undefined;
   }
 
   /**

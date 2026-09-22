@@ -61,11 +61,13 @@ export class DiagnosticReporter {
    *
    * @param corpusResult - The result to render
    * @param excludedPaths - Paths skipped as meta-documents or by ignore pattern
+   * @param notFollowedPaths - Links beneath the corpus root that were not followed
    * @returns The text to write to standard output
    */
   public reportValidation(
     corpusResult: CorpusResult,
     excludedPaths: readonly string[],
+    notFollowedPaths: readonly string[],
   ): string {
     const located: readonly LocatedDiagnostic[] = this.collectDiagnostics(corpusResult);
     const totals: SeverityTotals = this.countSeverities(located);
@@ -75,6 +77,7 @@ export class DiagnosticReporter {
         {
           documents: corpusResult.documents.length,
           excluded: excludedPaths,
+          notFollowed: notFollowedPaths,
           totals,
           diagnostics: located.map((entry: LocatedDiagnostic) => ({
             path: entry.path,
@@ -95,21 +98,26 @@ export class DiagnosticReporter {
       );
     }
 
-    return this.renderPretty(corpusResult, located, totals, excludedPaths);
+    return this.renderPretty(corpusResult, located, totals, excludedPaths, notFollowedPaths);
   }
 
   /**
    * Renders a statistics report.
    *
    * @param statistics - The measured summary to render
+   * @param notFollowedPaths - Links beneath the corpus root that were not followed, and so not measured
    * @returns The text to write to standard output
    */
-  public reportStatistics(statistics: CorpusStatisticsReport): string {
+  public reportStatistics(
+    statistics: CorpusStatisticsReport,
+    notFollowedPaths: readonly string[],
+  ): string {
     if (this.format === 'json') {
-      return JSON.stringify(statistics, null, 2);
+      return JSON.stringify({ ...statistics, notFollowed: notFollowedPaths }, null, 2);
     }
 
     const direction: DirectionCounts = statistics.referencesByDirection;
+    const links: readonly string[] = DiagnosticReporter.listNotFollowed(notFollowedPaths);
     const lines: readonly string[] = [
       '',
       '  Corpus structure',
@@ -132,9 +140,29 @@ export class DiagnosticReporter {
       '',
       `  total edges                    ${String(statistics.totalEdges)}`,
       '',
+      ...links,
+      ...(links.length > 0 ? [''] : []),
     ];
 
     return lines.join('\n');
+  }
+
+  /**
+   * Lists the links a walk did not follow, by name: unlike an exclusion,
+   * nobody asked for them to be skipped.
+   *
+   * @param notFollowedPaths - Links beneath the corpus root that were not followed
+   * @returns Lines to print; none when there are no such links
+   */
+  public static listNotFollowed(notFollowedPaths: readonly string[]): readonly string[] {
+    if (notFollowedPaths.length === 0) {
+      return [];
+    }
+
+    return [
+      `  ${String(notFollowedPaths.length)} link(s) not followed:`,
+      ...notFollowedPaths.map((path: string): string => `    ${path}`),
+    ];
   }
 
   /**
@@ -144,6 +172,7 @@ export class DiagnosticReporter {
    * @param located - Diagnostics paired with their document paths
    * @param totals - Severity counts across the corpus
    * @param excludedPaths - Paths skipped during discovery
+   * @param notFollowedPaths - Links beneath the corpus root that were not followed
    * @returns The text to write to standard output
    */
   private renderPretty(
@@ -151,6 +180,7 @@ export class DiagnosticReporter {
     located: readonly LocatedDiagnostic[],
     totals: SeverityTotals,
     excludedPaths: readonly string[],
+    notFollowedPaths: readonly string[],
   ): string {
     const lines: string[] = [''];
 
@@ -193,8 +223,10 @@ export class DiagnosticReporter {
     }
 
     if (excludedPaths.length > 0) {
-      lines.push(`  ${String(excludedPaths.length)} meta-document(s) excluded.`);
+      lines.push(`  ${String(excludedPaths.length)} path(s) excluded.`);
     }
+
+    lines.push(...DiagnosticReporter.listNotFollowed(notFollowedPaths));
 
     lines.push('');
     return lines.join('\n');

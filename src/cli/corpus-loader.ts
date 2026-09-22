@@ -6,11 +6,22 @@
  * excludes meta-documents, and produces the inputs the linter consumes.
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import type { Stats } from 'node:fs';
 import { join } from 'node:path';
 
 import { MetaDocumentFilter } from '../meta-documents.js';
 import type { CorpusDocumentInput } from '../ecr.js';
+
+/**
+ * A path the walk reached but could not read.
+ */
+export interface UnreadablePath {
+  /** Corpus-relative path, with forward slashes. */
+  readonly path: string;
+  /** Why it could not be read: the file system's error code, or its message. */
+  readonly reason: string;
+}
 
 /**
  * The outcome of walking a corpus directory.
@@ -18,8 +29,23 @@ import type { CorpusDocumentInput } from '../ecr.js';
 export interface LoadedCorpus {
   /** Documents to validate, in path order. */
   readonly documents: readonly CorpusDocumentInput[];
-  /** Corpus-relative paths excluded as meta-documents or by ignore pattern. */
+  /**
+   * Corpus-relative paths excluded as meta-documents or by ignore pattern. A
+   * directory excluded whole by a pattern is listed once, with a trailing
+   * slash, and is not walked.
+   */
   readonly excludedPaths: readonly string[];
+  /**
+   * Links beneath the corpus root that were not followed: every link to a
+   * directory, every link named like a document, and every link whose target
+   * is missing.
+   */
+  readonly notFollowedPaths: readonly string[];
+  /**
+   * Paths that could not be read. A corpus with any of these was not fully
+   * read, so its validation result cannot stand for the whole corpus.
+   */
+  readonly unreadablePaths: readonly UnreadablePath[];
 }
 
 /**
@@ -40,6 +66,12 @@ const MARKDOWN_EXTENSION: string = '.md';
  * Paths are reported relative to the corpus root and normalised to forward
  * slashes, so that ignore patterns and diagnostics read the same on every
  * platform.
+ *
+ * Symbolic links and junctions beneath the root are not followed, because the
+ * published recursive searches (`rg`, `grep -r`) do not follow them: a
+ * document reached only through a link would be validated but could not be
+ * found (1#9.11). A root that is itself a link is followed, as both search
+ * engines follow a link named on their command line.
  */
 export class CorpusLoader {
   /** Absolute or relative path to the corpus root directory. */
@@ -63,58 +95,205 @@ export class CorpusLoader {
    * Walks the corpus root and reads every Markdown document that is not
    * excluded.
    *
-   * @returns The documents to validate and the paths that were excluded
+   * A path that cannot be read is recorded and the walk continues, so that
+   * every such path is reported at once.
+   *
+   * @returns The documents to validate, and the paths excluded, not followed, or not readable
    */
   public load(): LoadedCorpus {
-    const discovered: readonly string[] = this.discoverMarkdownPaths(this.corpusRoot);
-    const documents: CorpusDocumentInput[] = [];
-    const excludedPaths: string[] = [];
+    const walk: CorpusWalk = new CorpusWalk();
 
-    for (const absolutePath of discovered) {
-      const relativePath: string = this.toCorpusRelativePath(absolutePath);
+    this.walkDirectory(this.corpusRoot, walk);
 
-      if (this.metaDocumentFilter.shouldExclude(relativePath)) {
-        excludedPaths.push(relativePath);
-        continue;
-      }
+    // Sorted by corpus-relative path, so the order is the same on every
+    // platform whatever the path separator.
+    walk.documents.sort((left: CorpusDocumentInput, right: CorpusDocumentInput): number =>
+      CorpusLoader.comparePaths(left.uri, right.uri),
+    );
+    walk.excludedPaths.sort((left: string, right: string): number =>
+      CorpusLoader.comparePaths(left, right),
+    );
+    walk.notFollowedPaths.sort((left: string, right: string): number =>
+      CorpusLoader.comparePaths(left, right),
+    );
+    walk.unreadablePaths.sort((left: UnreadablePath, right: UnreadablePath): number =>
+      CorpusLoader.comparePaths(left.path, right.path),
+    );
 
-      documents.push({
-        uri: relativePath,
-        markdownText: readFileSync(absolutePath, 'utf8'),
-      });
-    }
-
-    return { documents, excludedPaths };
+    return {
+      documents: walk.documents,
+      excludedPaths: walk.excludedPaths,
+      notFollowedPaths: walk.notFollowedPaths,
+      unreadablePaths: walk.unreadablePaths,
+    };
   }
 
   /**
-   * Recursively collects Markdown file paths beneath a directory, skipping
-   * hidden directories.
+   * Orders two corpus-relative paths by their UTF-16 code units, as
+   * `Array.prototype.sort` does by default.
+   *
+   * @param left - A path
+   * @param right - Another path
+   * @returns Negative, zero or positive, as for a sort comparator
+   */
+  private static comparePaths(left: string, right: string): number {
+    if (left === right) {
+      return 0;
+    }
+
+    return left < right ? -1 : 1;
+  }
+
+  /**
+   * Walks one directory, in name order.
    *
    * @param directory - Directory to walk
-   * @returns Absolute paths of every Markdown file found, in sorted order
+   * @param walk - What the walk has found so far
    */
-  private discoverMarkdownPaths(directory: string): readonly string[] {
-    const collected: string[] = [];
+  private walkDirectory(directory: string, walk: CorpusWalk): void {
+    let entryNames: string[];
 
-    for (const entryName of readdirSync(directory)) {
+    try {
+      entryNames = readdirSync(directory).sort((left: string, right: string): number =>
+        CorpusLoader.comparePaths(left, right),
+      );
+    } catch (error: unknown) {
+      walk.recordUnreadable(this.toCorpusRelativePath(directory), error);
+      return;
+    }
+
+    for (const entryName of entryNames) {
       if (entryName.startsWith(HIDDEN_PREFIX)) {
         continue;
       }
 
-      const entryPath: string = join(directory, entryName);
+      this.walkEntry(join(directory, entryName), entryName, walk);
+    }
+  }
 
-      if (statSync(entryPath).isDirectory()) {
-        collected.push(...this.discoverMarkdownPaths(entryPath));
-        continue;
+  /**
+   * Walks one directory entry: a link is recorded and not followed, a
+   * directory is descended into unless an ignore pattern excludes it whole,
+   * and a Markdown file is read unless it is excluded.
+   *
+   * @param entryPath - Path of the entry
+   * @param entryName - The entry's own name
+   * @param walk - What the walk has found so far
+   */
+  private walkEntry(entryPath: string, entryName: string, walk: CorpusWalk): void {
+    const relativePath: string = this.toCorpusRelativePath(entryPath);
+    let entryStats: Stats;
+
+    try {
+      entryStats = lstatSync(entryPath);
+    } catch (error: unknown) {
+      if (this.tellExcludedWhateverItIs(relativePath)) {
+        walk.excludedPaths.push(relativePath);
+        return;
       }
 
-      if (entryName.toLowerCase().endsWith(MARKDOWN_EXTENSION)) {
-        collected.push(entryPath);
-      }
+      walk.recordUnreadable(relativePath, error);
+      return;
     }
 
-    return collected.sort();
+    if (entryStats.isSymbolicLink()) {
+      this.recordLink(entryPath, entryName, relativePath, walk);
+      return;
+    }
+
+    if (entryStats.isDirectory()) {
+      if (this.metaDocumentFilter.excludesDirectory(relativePath)) {
+        walk.excludedPaths.push(`${relativePath}/`);
+        return;
+      }
+
+      this.walkDirectory(entryPath, walk);
+      return;
+    }
+
+    if (!CorpusLoader.tellMarkdownName(entryName)) {
+      return;
+    }
+
+    if (this.metaDocumentFilter.shouldExclude(relativePath)) {
+      walk.excludedPaths.push(relativePath);
+      return;
+    }
+
+    try {
+      walk.documents.push({
+        uri: relativePath,
+        markdownText: readFileSync(entryPath, 'utf8'),
+      });
+    } catch (error: unknown) {
+      walk.recordUnreadable(relativePath, error);
+    }
+  }
+
+  /**
+   * Records a link without following it. An ignore pattern covering it
+   * excludes it instead; a link to a file that is not Markdown is of no
+   * interest, as it could never be a document.
+   *
+   * @param entryPath - Path of the link
+   * @param entryName - The link's own name
+   * @param relativePath - The link's corpus-relative path
+   * @param walk - What the walk has found so far
+   */
+  private recordLink(
+    entryPath: string,
+    entryName: string,
+    relativePath: string,
+    walk: CorpusWalk,
+  ): void {
+    if (this.tellExcludedWhateverItIs(relativePath)) {
+      walk.excludedPaths.push(relativePath);
+      return;
+    }
+
+    if (!CorpusLoader.tellMarkdownName(entryName) && CorpusLoader.tellLinksToFile(entryPath)) {
+      return;
+    }
+
+    walk.notFollowedPaths.push(relativePath);
+  }
+
+  /**
+   * Determines whether an ignore pattern of either kind covers a path whose
+   * kind cannot or need not be known, such as a link or a vanished entry.
+   *
+   * @param relativePath - Corpus-relative path
+   * @returns `true` when a file pattern or a whole-directory pattern covers it
+   */
+  private tellExcludedWhateverItIs(relativePath: string): boolean {
+    return (
+      this.metaDocumentFilter.excludesDirectory(relativePath) ||
+      this.metaDocumentFilter.matchesIgnorePattern(relativePath)
+    );
+  }
+
+  /**
+   * Determines whether a name is a Markdown document's.
+   *
+   * @param entryName - A file or link name
+   * @returns `true` for a `.md` name, in any case
+   */
+  private static tellMarkdownName(entryName: string): boolean {
+    return entryName.toLowerCase().endsWith(MARKDOWN_EXTENSION);
+  }
+
+  /**
+   * Determines whether a link resolves to something other than a directory.
+   *
+   * @param linkPath - Path of the link
+   * @returns `true` when the target exists and is not a directory
+   */
+  private static tellLinksToFile(linkPath: string): boolean {
+    try {
+      return !statSync(linkPath).isDirectory();
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -132,5 +311,47 @@ export class CorpusLoader {
       .split('\\')
       .join('/')
       .replace(/^\/+/, '');
+  }
+}
+
+/**
+ * What one walk of a corpus has found so far.
+ */
+class CorpusWalk {
+  /** Documents read, in the order reached. */
+  public readonly documents: CorpusDocumentInput[] = [];
+
+  /** Paths excluded as meta-documents or by ignore pattern. */
+  public readonly excludedPaths: string[] = [];
+
+  /** Links recorded and not followed. */
+  public readonly notFollowedPaths: string[] = [];
+
+  /** Paths reached but not readable. */
+  public readonly unreadablePaths: UnreadablePath[] = [];
+
+  /**
+   * Records a path that could not be read.
+   *
+   * @param path - The corpus-relative path; empty for the corpus root itself
+   * @param error - What reading it threw
+   */
+  public recordUnreadable(path: string, error: unknown): void {
+    this.unreadablePaths.push({ path: path === '' ? '.' : path, reason: CorpusWalk.showReason(error) });
+  }
+
+  /**
+   * Describes a file-system error briefly.
+   *
+   * @param error - What was thrown
+   * @returns The error's code, such as `ENOENT`, or its message
+   */
+  private static showReason(error: unknown): string {
+    if (error instanceof Error) {
+      const code: unknown = (error as NodeJS.ErrnoException).code;
+      return typeof code === 'string' ? code : error.message;
+    }
+
+    return String(error);
   }
 }

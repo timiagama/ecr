@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -158,7 +158,7 @@ describe('Feature: lint', () => {
     const outcome: CommandOutcome = cli.run(['lint', corpus]);
 
     expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
-    expect(outcome.output).toContain('meta-document(s) excluded');
+    expect(outcome.output).toContain('path(s) excluded');
   });
 
   it('excludes project-specific documents named by --ignore', () => {
@@ -189,6 +189,31 @@ describe('Feature: lint', () => {
     expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
   });
 
+  // The published searches do not follow links, so a document reached only
+  // through one is outside the corpus: a reference to it stays unresolved.
+  it('reports links it did not follow, and keeps a reference through one unresolved', () => {
+    const corpus: string = join(workspace, 'with-link');
+    const elsewhere: string = join(workspace, 'with-link-target');
+    writeDocument(
+      join(corpus, '5.1.md'),
+      '# 5.1 - Doc\n\n## References\n\n- 3.1 - Shared (dependency - uses it)\n',
+    );
+    writeDocument(join(elsewhere, '3.1.md'), '# 3.1 - Shared\n\n## References\n');
+    symlinkSync(elsewhere, join(corpus, 'shared'), 'junction');
+
+    const pretty: CommandOutcome = cli.run(['lint', corpus]);
+
+    expect(pretty.exitCode, pretty.output).toBe(EXIT_VALIDATION_FAILED);
+    expect(pretty.output).toContain('corpus/unresolved-reference-target');
+    expect(pretty.output).toContain('1 link(s) not followed:\n    shared\n');
+
+    const json: { notFollowed: string[] } = JSON.parse(
+      cli.run(['lint', corpus, '--format', 'json']).output,
+    ) as { notFollowed: string[] };
+
+    expect(json.notFollowed).toEqual(['shared']);
+  });
+
   it('emits machine-readable output with one-based positions', () => {
     const corpus: string = join(workspace, 'json-out');
     writeDocument(
@@ -216,6 +241,35 @@ describe('Feature: lint', () => {
 
 describe('Feature: stats', () => {
   const cli: EcrCommandLine = new EcrCommandLine();
+
+  // What was not followed was not measured, so the measurement says so.
+  it('names the links it did not follow, in text and in JSON', () => {
+    const corpus: string = join(workspace, 'stats-with-link');
+    const elsewhere: string = join(workspace, 'stats-with-link-target');
+    writeDocument(join(corpus, '5.1.md'), '# 5.1 - Doc\n\n## References\n');
+    writeDocument(join(elsewhere, '3.1.md'), '# 3.1 - Shared\n\n## References\n');
+    symlinkSync(elsewhere, join(corpus, 'shared'), 'junction');
+
+    const pretty: CommandOutcome = cli.run(['stats', corpus]);
+
+    expect(pretty.exitCode, pretty.output).toBe(EXIT_SUCCESS);
+    expect(pretty.output).toContain('1 link(s) not followed:\n    shared\n');
+
+    const json = JSON.parse(cli.run(['stats', corpus, '--format', 'json']).output) as {
+      readonly documents: number;
+      readonly notFollowed: readonly string[];
+    };
+
+    expect(json.documents).toBe(1);
+    expect(json.notFollowed).toEqual(['shared']);
+  });
+
+  it('says nothing about links when there are none', () => {
+    const outcome: CommandOutcome = cli.run(['stats', EXAMPLE_CORPUS]);
+
+    expect(outcome.output).not.toContain('not followed');
+    expect(outcome.output.endsWith('\n')).toBe(true);
+  });
 
   it('measures the example corpus', () => {
     const outcome: CommandOutcome = cli.run(['stats', EXAMPLE_CORPUS, '--format', 'json']);
@@ -370,8 +424,28 @@ describe('Feature: Usage errors', () => {
 
     expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
     expect(outcome.output).toContain('No Markdown documents');
+    expect(outcome.output, 'no links, so no word about links').not.toContain('not followed');
     expect(outcome.stream).toBe('stderr');
   });
+
+  it.each([{ command: 'lint' }, { command: 'stats' }])(
+    '$command names the links, and why, when links are all the directory holds',
+    ({ command }) => {
+      const corpus: string = join(workspace, `only-links-${command}`);
+      const elsewhere: string = join(workspace, `only-links-${command}-target`);
+      writeDocument(join(elsewhere, '3.1.md'), '# 3.1 - Shared\n\n## References\n');
+      mkdirSync(corpus, { recursive: true });
+      symlinkSync(elsewhere, join(corpus, 'shared'), 'junction');
+
+      const outcome: CommandOutcome = cli.run([command, corpus]);
+
+      expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
+      expect(outcome.stream).toBe('stderr');
+      expect(outcome.output).toContain('No Markdown documents');
+      expect(outcome.output).toContain('1 link(s) not followed:\n    shared\n');
+      expect(outcome.output).toContain('`rg` and `grep -r` do not follow them');
+    },
+  );
 
   it('reports a failing corpus on stdout: the report is the result, the exit code is the signal', () => {
     const corpus: string = join(workspace, 'failing-on-stdout');

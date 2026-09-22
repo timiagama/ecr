@@ -25,7 +25,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { SpawnSyncReturns } from 'node:child_process';
 import { rgPath } from '@vscode/ripgrep';
@@ -206,6 +206,103 @@ export function runGrep(pattern: string, filePath: string): readonly number[] {
       encoding: 'utf8',
       env: { ...process.env, LC_ALL: GREP_LOCALE, LANG: GREP_LOCALE },
     }),
+  );
+}
+
+/**
+ * Interprets a recursive listing's result.
+ *
+ * @param engine - Engine that ran, for the error message
+ * @param pattern - Pattern that was run, for the error message
+ * @param outcome - The spawn result
+ * @param searchedName - The directory argument the engine was given, which prefixes each path it prints
+ * @returns Paths that matched, relative to the searched directory, with forward slashes, sorted
+ * @throws When the executable is missing or the engine reported an error
+ */
+function interpretListing(
+  engine: EngineName,
+  pattern: string,
+  outcome: SpawnSyncReturns<string>,
+  searchedName: string,
+): readonly string[] {
+  if (outcome.error !== undefined) {
+    throw new Error(`${engine} could not be run for pattern ${pattern}: ${outcome.error.message}`);
+  }
+
+  if (outcome.status === 1) {
+    return [];
+  }
+
+  if (outcome.status !== 0) {
+    throw new Error(
+      `${engine} failed (exit ${String(outcome.status)}) for pattern ${pattern}: ` +
+        outcome.stderr.trim(),
+    );
+  }
+
+  return outcome.stdout
+    .split(/\r?\n/)
+    .filter((line: string): boolean => line.length > 0)
+    .map((line: string): string => line.split('\\').join('/'))
+    .map((line: string): string =>
+      line.startsWith(`${searchedName}/`) ? line.slice(searchedName.length + 1) : line,
+    )
+    .sort();
+}
+
+/**
+ * Lists, recursively, the files beneath a directory that ripgrep finds a
+ * pattern in, as a published command does: the directory is searched, not
+ * named files, so ripgrep's own discovery rules apply.
+ *
+ * The search runs from the directory's parent and names the directory as its
+ * argument, as `rg ... docs` does. Running inside it instead would hide how
+ * the engine treats that argument -- whether it follows it when it is a link.
+ *
+ * @param pattern - Regular expression source, exactly as published
+ * @param directory - Directory to search, the published command's last argument
+ * @param flags - The published command's flags, such as `--no-ignore`, other than `-l`
+ * @returns Paths that matched, relative to the directory, sorted
+ */
+export function listRipgrepMatches(
+  pattern: string,
+  directory: string,
+  flags: readonly string[],
+): readonly string[] {
+  const searchedName: string = basename(directory);
+
+  return interpretListing(
+    'ripgrep',
+    pattern,
+    spawnSync(rgPath, ['--no-config', '--color=never', ...flags, '-l', '-f', patternFile(pattern), searchedName], {
+      cwd: dirname(directory),
+      encoding: 'utf8',
+    }),
+    searchedName,
+  );
+}
+
+/**
+ * Lists, recursively, the files beneath a directory that GNU grep finds a
+ * pattern in, as the published fallback `grep -rlE` does. Like
+ * {@link listRipgrepMatches}, it names the directory from its parent.
+ *
+ * @param pattern - Regular expression source, exactly as published
+ * @param directory - Directory to search
+ * @returns Paths that matched, relative to the directory, sorted
+ */
+export function listGrepMatches(pattern: string, directory: string): readonly string[] {
+  const searchedName: string = basename(directory);
+
+  return interpretListing(
+    'grep -E',
+    pattern,
+    spawnSync(GREP_COMMAND, ['-rlE', '-f', patternFile(pattern), searchedName], {
+      cwd: dirname(directory),
+      encoding: 'utf8',
+      env: { ...process.env, LC_ALL: GREP_LOCALE, LANG: GREP_LOCALE },
+    }),
+    searchedName,
   );
 }
 

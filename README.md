@@ -184,10 +184,10 @@ A literal search shows the mechanism. Two refinements make it reliable:
 
 ```bash
 # Go to Definition — locate the section a reference names
-grep -RInE "^#+ 8\.1#3([^0-9]|$)" docs/
+grep -rInE "^#+ 8\.1#3([^0-9]|$)" docs/
 
 # Find All References — every document citing that section or its sub-sections
-grep -RInE "([Ss]ee|[Pp]er) 8\.1#3([^0-9]|$)" docs/
+grep -rInE "([Ss]ee|[Pp]er) 8\.1#3([^0-9]|$)" docs/
 ```
 
 The reverse search is where ECR exposes relationships the target section
@@ -288,8 +288,8 @@ corpus. **The protocol does the navigation work; the linter only checks that
 the structure holds**.
 
 `lint` exits `0` when the corpus is clean, `1` when it contains errors, and
-`2` when the command line could not be understood, so it drops straight into
-CI. `--format json` gives you the same diagnostics as data.
+`2` when the command could not run, so it drops straight into CI.
+`--format json` gives you the same diagnostics as data.
 
 READMEs, `CLAUDE.md`, contributing guides and changelogs are excluded
 automatically. Use `--ignore` for anything project-specific:
@@ -297,6 +297,14 @@ automatically. Use `--ignore` for anything project-specific:
 ```bash
 npx @timiagama/ecr lint ./docs --ignore '**/*-CHECKLIST.md' --ignore 'LAST-REVIEW.md'
 ```
+
+A pattern ending in `/**` excludes a whole directory, which is then not read at all.
+
+Symbolic links and junctions inside the corpus are not followed, because `rg`
+and `grep -r` do not follow them either: a document your agent's searches cannot
+reach is left out rather than validated. Each link that could lead to a document
+is listed as not followed; one covered by `--ignore` is listed as excluded
+instead. The directory you name may itself be a link.
 
 There is no `backlinks` command, and there never will be. Navigation is what
 `grep` is for; a navigation command here would make the tool a dependency of
