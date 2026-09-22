@@ -51,6 +51,11 @@ jobs:
       # addresses stop meaning anything.
       - run: node dist/bin.js lint docs/engineering
 
+      # The last of the seven gates in AGENTS.md, so this job runs the same
+      # list as `npm run verify`. The package job below also lints the example
+      # corpus, but through the installed tarball.
+      - run: node dist/bin.js lint --example
+
   package:
     # Installs the packed tarball the way a user would and runs the binary
     # through node_modules/.bin. On Linux that entry is a symlink, which is

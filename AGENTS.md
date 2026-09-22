@@ -99,6 +99,10 @@ node dist/bin.js lint --example
 The three corpus checks need `npm run build` to have run first, because they
 execute the built binary.
 
+`npm run verify` runs all seven, in this order. Publishing from this directory
+runs all seven gates through `prepublishOnly`, with lifecycle scripts enabled.
+`tests/release-gate.test.ts` fails if the script and this list drift apart.
+
 `npm test` runs the navigation-guarantee suite, which executes the two search
 engines the protocol names — ripgrep and `grep -E` — against real files rather
 than simulating them with JavaScript regular expressions. The three engines
