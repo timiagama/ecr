@@ -11,6 +11,7 @@
  * whereas `--ignore` patterns are relative to the directory being linted.
  */
 
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 
@@ -37,6 +38,13 @@ const UNSAFE_PATH_CHARACTERS: RegExp = /[*?\r\n]/;
 
 /** A relative path that leaves the directory it is relative to. */
 const PARENT_PREFIX: RegExp = /^\.\.(?:[\\/]|$)/;
+
+/**
+ * How many names to try when creating the temporary file. A name collision
+ * needs 16 random hexadecimal digits to repeat, so one retry would do; a few
+ * cost nothing and keep a wedged directory from failing on chance alone.
+ */
+const TEMPORARY_NAME_ATTEMPTS: number = 5;
 
 /**
  * Reads, parses and updates a project's `.ecrignore`.
@@ -92,23 +100,72 @@ export class ProjectIgnoreFile {
     }
 
     const separator: string = existing === '' || existing.endsWith('\n') ? '' : '\n';
-    const temporaryPath: string = `${this.path}.${String(process.pid)}.tmp`;
+    const temporaryPath: string = this.writeTemporaryFile(`${existing}${separator}${pattern}\n`);
 
     try {
-      writeFileSync(temporaryPath, `${existing}${separator}${pattern}\n`, 'utf8');
       renameSync(temporaryPath, this.path);
     } catch (error: unknown) {
-      try {
-        rmSync(temporaryPath, { force: true });
-      } catch {
-        // The failure being reported is the write; a leftover temporary file
-        // does not change what the user must do.
-      }
+      ProjectIgnoreFile.removeQuietly(temporaryPath);
 
       throw error;
     }
 
     return 'added';
+  }
+
+  /**
+   * Removes a temporary file this class created, ignoring any failure to do
+   * so: the error being reported is the write, and a leftover temporary file
+   * does not change what the user must do about it.
+   *
+   * @param path - Path of the temporary file
+   */
+  private static removeQuietly(path: string): void {
+    try {
+      rmSync(path, { force: true });
+    } catch {
+      // Nothing useful can be done, and nothing more needs saying.
+    }
+  }
+
+  /**
+   * Writes the replacement contents to a temporary file beside the ignore
+   * file, which this call creates itself.
+   *
+   * The name is unpredictable and the file is created exclusively, so nothing
+   * already at that path is opened: a link planted there, pointing anywhere on
+   * the disk, makes creation fail rather than be written through. That also
+   * means only a file this call created is ever removed.
+   *
+   * @param contents - The complete new contents of the ignore file
+   * @returns Path of the temporary file, which now holds those contents
+   * @throws When no temporary file could be created
+   */
+  private writeTemporaryFile(contents: string): string {
+    let lastError: unknown;
+
+    for (let attempt: number = 0; attempt < TEMPORARY_NAME_ATTEMPTS; attempt += 1) {
+      const candidate: string = `${this.path}.${randomBytes(8).toString('hex')}.tmp`;
+
+      try {
+        writeFileSync(candidate, contents, { encoding: 'utf8', flag: 'wx' });
+        return candidate;
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+          // Something is already at that name. It is not this call's to
+          // read, write or remove: try another name.
+          lastError = error;
+          continue;
+        }
+
+        // Anything else means the name was free, so whatever is there now was
+        // created by the call that just failed, perhaps written only in part.
+        ProjectIgnoreFile.removeQuietly(candidate);
+        throw error;
+      }
+    }
+
+    throw lastError;
   }
 
   /**
