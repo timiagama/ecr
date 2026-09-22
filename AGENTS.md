@@ -241,7 +241,7 @@ resolving. The DocID prefix makes this collision impossible.
 `docs/engineering/0.3 - ECR Navigation Protocol for Coding Agents.md` and run
 `npm run generate:protocol`;
 the build does this too. The shipped copy has this repository's ECR identity
-removed, because `ecr init` writes it verbatim into a user's corpus where a
+removed, because `ecr init` installs it verbatim into a user's project, where a
 DocID of ours would mean nothing.
 
 The artifact is committed rather than ignored so that the test suite and

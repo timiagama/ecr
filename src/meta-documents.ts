@@ -19,9 +19,9 @@
  * `readme.MD` and `Readme` are all treated alike.
  */
 export const DEFAULT_META_DOCUMENT_NAMES: readonly string[] = [
-  // Written into a corpus by `ecr init`. It instructs an agent how to walk the
-  // corpus and carries no DocID by design, so without this entry `ecr init`
-  // would leave `ecr lint` failing on the file it had just created.
+  // The name `ecr init` once gave the navigation protocol when it wrote it into
+  // a corpus. The protocol carries no DocID by design, so a copy kept in a
+  // corpus under that name must not be reported as an invalid document.
   'ecr-navigation-protocol',
   'readme',
   'claude',

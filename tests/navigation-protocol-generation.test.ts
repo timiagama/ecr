@@ -2,7 +2,7 @@
  * Navigation Protocol Generation Tests
  *
  * The navigation protocol is authored once, in the engineering corpus, as a
- * full ECR document. The copy `ecr init` writes into a user's corpus is
+ * full ECR document. The copy `ecr init` installs into a user's project is
  * generated from it with this repository's identity removed, because a DocID
  * carries no meaning in someone else's numbering space.
  *

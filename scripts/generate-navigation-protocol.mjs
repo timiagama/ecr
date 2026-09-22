@@ -3,10 +3,9 @@
  *
  * The authored document lives in the engineering corpus and is a full ECR
  * document: it carries a DocID, its headings carry SectionIDs, and it has a
- * References section. The copy `ecr init` writes into a user's corpus must not
- * carry any of that. A DocID means nothing in someone else's numbering space,
- * and the file is excluded from validation by filename anyway, so an identity
- * on it would be inert and misleading.
+ * References section. The copy `ecr init` installs into a user's project must
+ * not carry any of that. A DocID means nothing in someone else's numbering
+ * space, so an identity on it would be inert and misleading.
  *
  * The transform therefore removes this document's own identity and nothing
  * else. Fenced code blocks are left untouched, and so is any heading bearing an

@@ -246,7 +246,7 @@ documentation in about two minutes.
 ### Commands
 
 ```bash
-npx @timiagama/ecr init ./docs    # add the agent navigation protocol
+npx @timiagama/ecr init ./ecr     # install ECR documentation
 npx @timiagama/ecr lint ./docs    # check structural compliance
 npx @timiagama/ecr stats ./docs   # measure the structure you already have
 ```
@@ -282,10 +282,12 @@ npx @timiagama/ecr stats --example
 
 ### What the commands do
 
-`init` writes [the coding agent navigation protocol](protocol/navigation-protocol.md) into
-your documentation folder. That file teaches your coding agent to walk the
-corpus. **The protocol does the navigation work; the linter only checks that
-the structure holds**.
+`init` copies the ECR documentation into the directory you choose. Open its
+README.md for the user guide, specification, navigation protocol and examples.
+The folder structure matches this repository, so the links work locally.
+Keep this documentation outside your own corpus—for example, ECR documentation
+in ./ecr and your documents in ./docs. It also adds that directory to
+`.ecrignore`, so linting your whole project with `ecr lint .` skips it.
 
 `lint` exits `0` when the corpus is clean, `1` when it contains errors, and
 `2` when the command could not run, so it drops straight into CI.
@@ -297,6 +299,11 @@ automatically. Use `--ignore` for anything project-specific:
 ```bash
 npx @timiagama/ecr lint ./docs --ignore '**/*-CHECKLIST.md' --ignore 'LAST-REVIEW.md'
 ```
+
+To keep patterns out of every command, put them in a `.ecrignore` file in your
+project root, the directory you run `ecr` from, one per line, relative to that
+directory. Blank lines and lines starting with `#` are ignored. Folders named
+`node_modules` are always skipped.
 
 A pattern ending in `/**` excludes a whole directory, which is then not read at all.
 
@@ -312,7 +319,9 @@ the thing ECR exists to prove unnecessary.
 
 You can adopt ECR entirely by hand. The tooling is optional.
 
-## Migrating existing documentation
+## Adopting ECR
+
+### Migrating existing documentation
 
 You do not need to convert everything at once. ECR degrades gracefully: a
 partially-converted corpus is more navigable than an unconverted one, and
@@ -333,7 +342,7 @@ and step 4 needs corpus-wide knowledge: resolving
 `as described in the storage doc` to `per 7.1#2` means knowing what documents
 exist and what they cover.
 
-### Using a coding agent to migrate
+#### Using a coding agent to migrate
 
 Migration always requires knowledge of the corpus, which makes it a good fit
 for a coding agent. Much of the work is mechanical once the DocID set is known,
@@ -351,6 +360,12 @@ My advice, from doing this on a real corpus:
 Run `ecr lint` after each pass. The linter catches structural breakage; the
 reviews catch the judgement calls the linter cannot see, such as whether an
 edge is really an `authority` or just a `dependency`.
+
+### Authoring documents with AI
+
+You do not have to maintain ECR structure by hand. Give the [user guide](<spec/v2/2 - ECR - User Guide.md>) and [specification](<spec/v2/1 - ECR - Structural Specification.md>) to a coding agent, desktop harness or general-purpose model alongside the documents it is working on, and it can help create or amend ECR-compliant Markdown.
+
+The linter checks structural compliance. Human review is still needed for the judgement calls ECR cannot make — for example, whether a relationship is really an `authority`, `constraint`, `contract` or `dependency`.
 
 ## What ECR is not
 

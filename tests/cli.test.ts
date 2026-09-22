@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,6 +57,15 @@ describe('Feature: Argument parsing', () => {
     expect(parsed.corpusRoot).toBe('docs');
     expect(parsed.format).toBe('pretty');
     expect(parsed.ignorePatterns).toEqual([]);
+  });
+
+  it.each([
+    { command: 'lint', directory: 'docs' },
+    { command: 'stats', directory: 'docs' },
+    // init installs beside the corpus, never in it.
+    { command: 'init', directory: 'ecr' },
+  ])('defaults $command to ./$directory', ({ command, directory }) => {
+    expect(parser.parse([command]).corpusRoot).toBe(directory);
   });
 
   it('accepts a directory, a format and repeated ignore patterns', () => {
@@ -311,76 +320,8 @@ describe('Feature: stats', () => {
   });
 });
 
-describe('Feature: init', () => {
-  const cli: EcrCommandLine = new EcrCommandLine();
-
-  it('writes the navigation protocol into the corpus', () => {
-    const corpus: string = join(workspace, 'init-target');
-    mkdirSync(corpus, { recursive: true });
-
-    const outcome: CommandOutcome = cli.run(['init', corpus]);
-    const written: string = join(corpus, 'ECR-NAVIGATION-PROTOCOL.md');
-
-    expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
-    expect(existsSync(written)).toBe(true);
-    expect(readFileSync(written, 'utf8')).toContain('ECR Navigation Protocol for Coding Agents');
-  });
-
-  it('leaves the corpus still linting cleanly', () => {
-    // Regression: `init` writes a protocol file that carries no DocID by
-    // design. Until it was added to the meta-document defaults, running the
-    // two documented commands in the documented order took a conforming
-    // corpus from exit 0 to exit 1.
-    const corpus: string = join(workspace, 'init-then-lint');
-    writeDocument(
-      join(corpus, '4.2 - Contract.md'),
-      ['# 4.2 - Contract', '', '## 4.2#1 - Purpose', '', '## References', '', ''].join('\n'),
-    );
-
-    const before: CommandOutcome = cli.run(['lint', corpus]);
-    expect(before.exitCode, before.output).toBe(EXIT_SUCCESS);
-
-    expect(cli.run(['init', corpus]).exitCode).toBe(EXIT_SUCCESS);
-
-    const after: CommandOutcome = cli.run(['lint', corpus]);
-    expect(
-      after.exitCode,
-      `ecr init must not break ecr lint:\n${after.output}`,
-    ).toBe(EXIT_SUCCESS);
-  });
-
-  it('creates the directory when it does not exist yet', () => {
-    const corpus: string = join(workspace, 'fresh-project', 'docs');
-
-    const outcome: CommandOutcome = cli.run(['init', corpus]);
-
-    expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
-    expect(existsSync(join(corpus, 'ECR-NAVIGATION-PROTOCOL.md'))).toBe(true);
-  });
-
-  it('refuses a path that is a file, on stderr', () => {
-    const file: string = join(workspace, 'not-a-directory.md');
-    writeFileSync(file, '# x', 'utf8');
-
-    const outcome: CommandOutcome = cli.run(['init', file]);
-
-    expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
-    expect(outcome.stream).toBe('stderr');
-    expect(outcome.output).toContain('not a directory');
-  });
-
-  it('refuses to overwrite an existing protocol', () => {
-    const corpus: string = join(workspace, 'init-twice');
-    mkdirSync(corpus, { recursive: true });
-
-    expect(cli.run(['init', corpus]).exitCode).toBe(EXIT_SUCCESS);
-
-    const second: CommandOutcome = cli.run(['init', corpus]);
-
-    expect(second.exitCode).toBe(EXIT_USAGE_ERROR);
-    expect(second.output).toContain('already exists');
-  });
-});
+// init has its own suite, tests/init.test.ts, which runs every case in a
+// throwaway project so that nothing is ever installed into this repository.
 
 describe('Feature: Usage errors', () => {
   const cli: EcrCommandLine = new EcrCommandLine();

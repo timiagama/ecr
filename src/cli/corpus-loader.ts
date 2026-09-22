@@ -8,7 +8,7 @@
 
 import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import type { Stats } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 
 import { MetaDocumentFilter } from '../meta-documents.js';
 import type { CorpusDocumentInput } from '../ecr.js';
@@ -46,6 +46,22 @@ export interface LoadedCorpus {
    * read, so its validation result cannot stand for the whole corpus.
    */
   readonly unreadablePaths: readonly UnreadablePath[];
+  /**
+   * Whether the project's `.ecrignore` excludes the corpus root itself, in
+   * which case nothing beneath it was walked.
+   */
+  readonly rootExcluded: boolean;
+}
+
+/**
+ * A project's own ignore patterns, from its `.ecrignore`, and the directory
+ * they are relative to.
+ */
+export interface ProjectIgnore {
+  /** The project root: the directory the command runs from. */
+  readonly workingDirectory: string;
+  /** Patterns relative to the working directory. */
+  readonly patterns: readonly string[];
 }
 
 /**
@@ -54,6 +70,15 @@ export interface LoadedCorpus {
  * similar never reach the linter.
  */
 const HIDDEN_PREFIX: string = '.';
+
+/**
+ * The directory package managers install dependencies into. It is skipped
+ * wherever the walk meets it: an installed copy of this package carries the
+ * specification, whose DocIDs would collide with a project's own, and any
+ * other package's Markdown is not the project's documentation. A corpus root
+ * named explicitly is still walked, even inside one.
+ */
+const DEPENDENCY_DIRECTORY: string = 'node_modules';
 
 /**
  * Extension identifying a Markdown document.
@@ -81,14 +106,32 @@ export class CorpusLoader {
   private readonly metaDocumentFilter: MetaDocumentFilter;
 
   /**
+   * Applies the project's `.ecrignore` patterns, which are relative to the
+   * working directory rather than the corpus root; absent when there are none.
+   */
+  private readonly projectFilter: MetaDocumentFilter | undefined;
+
+  /** The directory the project's patterns are relative to. */
+  private readonly workingDirectory: string | undefined;
+
+  /**
    * Creates a loader for one corpus directory.
    *
    * @param corpusRoot - Path to the directory to walk
-   * @param ignorePatterns - Glob patterns excluding project-specific meta-documents
+   * @param ignorePatterns - Glob patterns relative to the corpus root, from `--ignore`
+   * @param projectIgnore - The project's `.ecrignore` patterns, relative to the working directory
    */
-  public constructor(corpusRoot: string, ignorePatterns: readonly string[] = []) {
+  public constructor(
+    corpusRoot: string,
+    ignorePatterns: readonly string[] = [],
+    projectIgnore?: ProjectIgnore,
+  ) {
     this.corpusRoot = corpusRoot;
     this.metaDocumentFilter = new MetaDocumentFilter(ignorePatterns);
+    // No meta-document names: those are already applied by the corpus filter.
+    this.projectFilter =
+      projectIgnore === undefined ? undefined : new MetaDocumentFilter(projectIgnore.patterns, []);
+    this.workingDirectory = projectIgnore?.workingDirectory;
   }
 
   /**
@@ -102,8 +145,11 @@ export class CorpusLoader {
    */
   public load(): LoadedCorpus {
     const walk: CorpusWalk = new CorpusWalk();
+    const rootExcluded: boolean = this.tellProjectExcludesRoot();
 
-    this.walkDirectory(this.corpusRoot, walk);
+    if (!rootExcluded) {
+      this.walkDirectory(this.corpusRoot, walk);
+    }
 
     // Sorted by corpus-relative path, so the order is the same on every
     // platform whatever the path separator.
@@ -125,6 +171,7 @@ export class CorpusLoader {
       excludedPaths: walk.excludedPaths,
       notFollowedPaths: walk.notFollowedPaths,
       unreadablePaths: walk.unreadablePaths,
+      rootExcluded,
     };
   }
 
@@ -187,7 +234,7 @@ export class CorpusLoader {
     try {
       entryStats = lstatSync(entryPath);
     } catch (error: unknown) {
-      if (this.tellExcludedWhateverItIs(relativePath)) {
+      if (this.tellExcludedWhateverItIs(relativePath, entryPath)) {
         walk.excludedPaths.push(relativePath);
         return;
       }
@@ -202,7 +249,11 @@ export class CorpusLoader {
     }
 
     if (entryStats.isDirectory()) {
-      if (this.metaDocumentFilter.excludesDirectory(relativePath)) {
+      if (
+        entryName === DEPENDENCY_DIRECTORY ||
+        this.metaDocumentFilter.excludesDirectory(relativePath) ||
+        this.tellProjectExcludesDirectory(entryPath)
+      ) {
         walk.excludedPaths.push(`${relativePath}/`);
         return;
       }
@@ -215,7 +266,10 @@ export class CorpusLoader {
       return;
     }
 
-    if (this.metaDocumentFilter.shouldExclude(relativePath)) {
+    if (
+      this.metaDocumentFilter.shouldExclude(relativePath) ||
+      this.tellProjectExcludesFile(entryPath)
+    ) {
       walk.excludedPaths.push(relativePath);
       return;
     }
@@ -246,7 +300,7 @@ export class CorpusLoader {
     relativePath: string,
     walk: CorpusWalk,
   ): void {
-    if (this.tellExcludedWhateverItIs(relativePath)) {
+    if (this.tellExcludedWhateverItIs(relativePath, entryPath)) {
       walk.excludedPaths.push(relativePath);
       return;
     }
@@ -263,13 +317,84 @@ export class CorpusLoader {
    * kind cannot or need not be known, such as a link or a vanished entry.
    *
    * @param relativePath - Corpus-relative path
+   * @param entryPath - Path of the entry, for the project's patterns
    * @returns `true` when a file pattern or a whole-directory pattern covers it
    */
-  private tellExcludedWhateverItIs(relativePath: string): boolean {
+  private tellExcludedWhateverItIs(relativePath: string, entryPath: string): boolean {
     return (
       this.metaDocumentFilter.excludesDirectory(relativePath) ||
-      this.metaDocumentFilter.matchesIgnorePattern(relativePath)
+      this.metaDocumentFilter.matchesIgnorePattern(relativePath) ||
+      this.tellProjectExcludesDirectory(entryPath) ||
+      this.tellProjectExcludesFile(entryPath)
     );
+  }
+
+  /**
+   * Determines whether a `.ecrignore` pattern excludes the corpus root, either
+   * itself or through a directory above it: with `ecr/**` ignored, a root of
+   * `ecr/sub` is excluded as surely as `ecr`.
+   *
+   * @returns `true` when the root, or any directory between it and the project root, is excluded whole
+   */
+  private tellProjectExcludesRoot(): boolean {
+    const projectPath: string | undefined = this.toProjectRelativePath(this.corpusRoot);
+
+    if (projectPath === undefined || projectPath === '') {
+      return false;
+    }
+
+    const segments: readonly string[] = projectPath.split('/');
+
+    return segments.some((_segment: string, index: number): boolean =>
+      this.projectFilter?.excludesDirectory(segments.slice(0, index + 1).join('/')) === true,
+    );
+  }
+
+  /**
+   * Determines whether a `.ecrignore` pattern excludes a whole directory.
+   *
+   * @param directoryPath - Path of the directory
+   * @returns `true` when the project's patterns cover everything beneath it
+   */
+  private tellProjectExcludesDirectory(directoryPath: string): boolean {
+    const projectPath: string | undefined = this.toProjectRelativePath(directoryPath);
+
+    return projectPath !== undefined && projectPath !== '' &&
+      this.projectFilter?.excludesDirectory(projectPath) === true;
+  }
+
+  /**
+   * Determines whether a `.ecrignore` pattern excludes a file.
+   *
+   * @param filePath - Path of the file
+   * @returns `true` when one of the project's patterns matches it
+   */
+  private tellProjectExcludesFile(filePath: string): boolean {
+    const projectPath: string | undefined = this.toProjectRelativePath(filePath);
+
+    return projectPath !== undefined && this.projectFilter?.matchesIgnorePattern(projectPath) === true;
+  }
+
+  /**
+   * Converts a path into one relative to the working directory, with forward
+   * slashes, which is what `.ecrignore` patterns are matched against.
+   *
+   * @param path - A path
+   * @returns The path relative to the working directory, or `undefined` when there are no project patterns or the path lies outside the project
+   */
+  private toProjectRelativePath(path: string): string | undefined {
+    if (this.workingDirectory === undefined) {
+      return undefined;
+    }
+
+    const projectPath: string = relative(this.workingDirectory, path);
+
+    // The project's patterns say nothing about paths outside the project.
+    if (isAbsolute(projectPath) || /^\.\.(?:[\\/]|$)/.test(projectPath)) {
+      return undefined;
+    }
+
+    return projectPath.replaceAll('\\', '/');
   }
 
   /**

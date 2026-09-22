@@ -4,12 +4,12 @@
  * An ordinary file or directory that cannot be read must be reported, and the
  * command must refuse to pass a corpus it did not fully read. Permissions
  * cannot make a file unreadable portably (Windows ignores `chmod`), so this
- * file replaces the two file system calls that read, and makes them fail for
+ * file replaces the file system calls involved, and makes them fail for
  * chosen paths.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import type * as FileSystem from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -19,11 +19,18 @@ import type { LoadedCorpus } from '../src/cli/corpus-loader.js';
 import { EcrCommandLine } from '../src/cli.js';
 import type { CommandOutcome } from '../src/cli.js';
 
-/** A read that must fail: which call, for a path ending how, with which code. */
+/**
+ * A call that must fail: which call, for which path, with which code. The
+ * path is matched by its ending, or, with `pathIncludes`, by a fragment, so
+ * that a temporary file named after the real one matches too.
+ */
 interface SimulatedFailure {
-  readonly call: 'readFileSync' | 'readdirSync';
-  readonly pathEnding: string;
+  readonly call: 'readFileSync' | 'readdirSync' | 'cpSync' | 'writeFileSync' | 'statSync' | 'rmSync' | 'renameSync';
+  readonly pathEnding?: string;
+  readonly pathIncludes?: string;
   readonly code: string;
+  /** For writeFileSync: empty the file first, as a write that fails part-way does. */
+  readonly truncates?: boolean;
 }
 
 const failures: SimulatedFailure[] = vi.hoisted((): SimulatedFailure[] => []);
@@ -32,19 +39,38 @@ vi.mock('node:fs', async (importOriginal: () => Promise<typeof FileSystem>): Pro
   const actual: typeof FileSystem = await importOriginal();
 
   /**
+   * Finds the simulated failure for a call and path, if one is set.
+   *
+   * @param call - The file system call being made
+   * @param path - The path it was given
+   * @returns The failure, or `undefined`
+   */
+  function findFailure(call: SimulatedFailure['call'], path: FileSystem.PathOrFileDescriptor): SimulatedFailure | undefined {
+    const normalised: string = String(path).replaceAll('\\', '/');
+
+    return failures.find(
+      (candidate: SimulatedFailure): boolean =>
+        candidate.call === call &&
+        (candidate.pathEnding === undefined || normalised.endsWith(candidate.pathEnding)) &&
+        (candidate.pathIncludes === undefined || normalised.includes(candidate.pathIncludes)),
+    );
+  }
+
+  /**
    * Throws the simulated error for a call and path, if one is set.
    *
    * @param call - The file system call being made
    * @param path - The path it was given
    */
   function failIfSimulated(call: SimulatedFailure['call'], path: FileSystem.PathOrFileDescriptor): void {
-    const normalised: string = String(path).replaceAll('\\', '/');
-    const failure: SimulatedFailure | undefined = failures.find(
-      (candidate: SimulatedFailure): boolean => candidate.call === call && normalised.endsWith(candidate.pathEnding),
-    );
+    const failure: SimulatedFailure | undefined = findFailure(call, path);
 
     if (failure !== undefined) {
-      throw Object.assign(new Error(`${failure.code}: simulated, ${call} '${normalised}'`), { code: failure.code });
+      if (failure.truncates === true) {
+        actual.writeFileSync(path, '');
+      }
+
+      throw Object.assign(new Error(`${failure.code}: simulated, ${call} '${String(path)}'`), { code: failure.code });
     }
   }
 
@@ -58,6 +84,26 @@ vi.mock('node:fs', async (importOriginal: () => Promise<typeof FileSystem>): Pro
       failIfSimulated('readdirSync', path);
       return actual.readdirSync(path, options as BufferEncoding);
     }) as typeof FileSystem.readdirSync,
+    cpSync: ((source: string, destination: string, options?: FileSystem.CopySyncOptions): void => {
+      failIfSimulated('cpSync', destination);
+      actual.cpSync(source, destination, options);
+    }) as typeof FileSystem.cpSync,
+    writeFileSync: ((path: FileSystem.PathOrFileDescriptor, data: string, options?: FileSystem.WriteFileOptions): void => {
+      failIfSimulated('writeFileSync', path);
+      actual.writeFileSync(path, data, options);
+    }) as typeof FileSystem.writeFileSync,
+    statSync: ((path: FileSystem.PathLike, options?: FileSystem.StatSyncOptions): unknown => {
+      failIfSimulated('statSync', path);
+      return actual.statSync(path, options);
+    }) as typeof FileSystem.statSync,
+    rmSync: ((path: FileSystem.PathLike, options?: FileSystem.RmOptions): void => {
+      failIfSimulated('rmSync', path);
+      actual.rmSync(path, options);
+    }) as typeof FileSystem.rmSync,
+    renameSync: ((oldPath: FileSystem.PathLike, newPath: FileSystem.PathLike): void => {
+      failIfSimulated('renameSync', newPath);
+      actual.renameSync(oldPath, newPath);
+    }) as typeof FileSystem.renameSync,
   };
 });
 
@@ -165,5 +211,101 @@ describe('Feature: The command does not pass a corpus it could not fully read', 
     const outcome: CommandOutcome = cli.run(['lint', join(workspace, 'corpus'), '--ignore', 'locked.md']);
 
     expect(outcome.exitCode, outcome.output).toBe(0);
+  });
+});
+
+describe('Feature: init never reports a failed installation as a success', () => {
+  it('removes what it copied when copying fails part-way, and leaves .ecrignore alone', () => {
+    const cli: EcrCommandLine = new EcrCommandLine({ workingDirectory: workspace });
+    failures.push({ call: 'cpSync', pathEnding: 'ecr/spec', code: 'ENOSPC' });
+
+    const outcome: CommandOutcome = cli.run(['init']);
+
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.output).toContain('nothing was installed');
+    expect(existsSync(join(workspace, 'ecr'))).toBe(false);
+    expect(existsSync(join(workspace, '.ecrignore'))).toBe(false);
+  });
+
+  it('keeps an existing empty destination, emptied again, when copying fails', () => {
+    mkdirSync(join(workspace, 'ecr'));
+    const cli: EcrCommandLine = new EcrCommandLine({ workingDirectory: workspace });
+    failures.push({ call: 'cpSync', pathEnding: 'ecr/examples', code: 'ENOSPC' });
+
+    expect(cli.run(['init']).exitCode).toBe(2);
+    expect(readdirSync(join(workspace, 'ecr'))).toEqual([]);
+  });
+
+  it('says so, and names the line to add, when .ecrignore cannot be written', () => {
+    const cli: EcrCommandLine = new EcrCommandLine({ workingDirectory: workspace });
+    failures.push({ call: 'writeFileSync', pathIncludes: '.ecrignore', code: 'EACCES' });
+
+    const outcome: CommandOutcome = cli.run(['init']);
+
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.stream).toBe('stderr');
+    expect(outcome.output).toContain('could not update .ecrignore (EACCES)');
+    expect(outcome.output).toContain('ecr/**');
+  });
+
+  // A write that fails part-way must not cost the project the patterns it
+  // already had: the error only tells the user to add the new line.
+  it('keeps the existing .ecrignore intact when a write fails part-way', () => {
+    const original: string = '# drafts\ndocs/drafts/**\n';
+    writeFileSync(join(workspace, '.ecrignore'), original);
+    const cli: EcrCommandLine = new EcrCommandLine({ workingDirectory: workspace });
+    failures.push({ call: 'writeFileSync', pathIncludes: '.ecrignore', code: 'ENOSPC', truncates: true });
+
+    expect(cli.run(['init']).exitCode).toBe(2);
+    expect(readFileSync(join(workspace, '.ecrignore'), 'utf8')).toBe(original);
+    expect(readdirSync(workspace).filter((name: string): boolean => name.startsWith('.ecrignore'))).toEqual(['.ecrignore']);
+  });
+
+  it('keeps the existing .ecrignore intact when replacing it fails', () => {
+    const original: string = 'docs/drafts/**\n';
+    writeFileSync(join(workspace, '.ecrignore'), original);
+    const cli: EcrCommandLine = new EcrCommandLine({ workingDirectory: workspace });
+    failures.push({ call: 'renameSync', pathEnding: '/.ecrignore', code: 'EPERM' });
+
+    expect(cli.run(['init']).exitCode).toBe(2);
+    expect(readFileSync(join(workspace, '.ecrignore'), 'utf8')).toBe(original);
+    expect(readdirSync(workspace).filter((name: string): boolean => name.startsWith('.ecrignore'))).toEqual(['.ecrignore']);
+  });
+
+  it('reports, rather than throws, when the destination cannot be examined', () => {
+    mkdirSync(join(workspace, 'ecr'));
+    const cli: EcrCommandLine = new EcrCommandLine({ workingDirectory: workspace });
+    failures.push({ call: 'statSync', pathEnding: '/ecr', code: 'EACCES' });
+
+    const outcome: CommandOutcome = cli.run(['init']);
+
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.output).toContain('EACCES');
+    expect(existsSync(join(workspace, '.ecrignore'))).toBe(false);
+  });
+
+  it('reports, rather than throws, when the destination cannot be listed', () => {
+    mkdirSync(join(workspace, 'ecr'));
+    const cli: EcrCommandLine = new EcrCommandLine({ workingDirectory: workspace });
+    failures.push({ call: 'readdirSync', pathEnding: '/ecr', code: 'EACCES' });
+
+    const outcome: CommandOutcome = cli.run(['init']);
+
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.output).toContain('EACCES');
+  });
+
+  it('says what was left behind when removing a failed installation also fails', () => {
+    const cli: EcrCommandLine = new EcrCommandLine({ workingDirectory: workspace });
+    failures.push({ call: 'cpSync', pathEnding: 'ecr/spec', code: 'ENOSPC' });
+    failures.push({ call: 'rmSync', pathEnding: '/ecr', code: 'EBUSY' });
+
+    const outcome: CommandOutcome = cli.run(['init']);
+
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.output).not.toContain('nothing was installed');
+    expect(outcome.output).toContain('could not remove');
+    expect(outcome.output).toContain('ecr');
+    expect(existsSync(join(workspace, '.ecrignore'))).toBe(false);
   });
 });

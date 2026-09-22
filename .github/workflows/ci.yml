@@ -96,8 +96,22 @@ jobs:
           npx ecr stats --example | grep -E 'total edges +38'
           npx ecr lint --example
 
-          npx ecr init docs
-          test -f docs/ECR-NAVIGATION-PROTOCOL.md
+          # init installs the documentation beside the corpus, and excludes it.
+          npx ecr init
+          test -f ecr/README.md
+          test -f ecr/protocol/navigation-protocol.md
+          grep -qx 'ecr/\*\*' .ecrignore
+
+          # Linting the whole project sees only the project's own documents:
+          # not the installed copy, and not the package inside node_modules.
+          mkdir docs
+          printf '# 5.1 - Payments\n\n## References\n' > docs/5.1.md
+          npx ecr lint .
+
+          # .ecrignore never hides the bundled example, even when it excludes
+          # node_modules, where the installed package keeps it.
+          printf 'node_modules/**\n' >> .ecrignore
+          npx ecr lint --example
 
           # A broken corpus must fail the build, not pass silently.
           printf '# 4.2 - Contract\n\nNo References section.\n' > docs/4.2.md
