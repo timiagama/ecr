@@ -974,3 +974,60 @@ describe('Feature: A reference whose identifier is wrapped in formatting is repo
     expect(result.extracted!.inlineReferences.map((edge: InlineReferenceEdge) => edge.toId)).toEqual(edges);
   });
 });
+
+// ===========================================================================
+// Feature: An empty References section is information, not an error
+// ===========================================================================
+
+// The severity is the rule's own (1#9.6, 1#12.3). It used to be an error here
+// and was downgraded only by the Ecr facade matching the message text, so a
+// caller using the visitor directly saw a valid document fail.
+describe('Feature: An empty References section is information, not an error', () => {
+  const HEADER: string = '# 5.1 - Doc\n\n## 5.1#1 - Section\n\nText.\n\n';
+
+  /**
+   * Returns the ECR103 diagnostics of a result as `[severity, cause]` pairs.
+   *
+   * @param result - The lint result
+   * @returns One pair per ECR103 diagnostic, in order
+   */
+  function showReferencesFindings(result: LintResult): ReadonlyArray<readonly [string, unknown]> {
+    return result.diagnostics
+      .filter((diagnostic: Diagnostic) => diagnostic.ruleId === 'ECR103')
+      .map((diagnostic: Diagnostic) => [diagnostic.severity, diagnostic.data?.['cause']] as const);
+  }
+
+  it.each([
+    { form: 'the heading as the last line', tail: '## References\n' },
+    { form: 'a paragraph beneath the heading', tail: '## References\n\nNothing to declare.\n' },
+    { form: 'another section after the heading', tail: '## References\n\n## 5.1#2 - Later\n\nText.\n' },
+  ])('passes, reporting info, with $form', ({ tail }) => {
+    const result: LintResult = lintMarkdown(HEADER + tail);
+
+    expect(showReferencesFindings(result)).toEqual([['info', 'references-empty']]);
+    expect(result.ok).toBe(true);
+    expect(result.extracted!.references).toEqual([]);
+  });
+
+  it('still reports an empty section whose heading is itself malformed', () => {
+    const result: LintResult = lintMarkdown(HEADER + '## **References**\n');
+
+    expect(showReferencesFindings(result)).toEqual([
+      ['error', 'references-heading-source-form'],
+      ['info', 'references-empty'],
+    ]);
+    expect(result.ok).toBe(false);
+  });
+
+  it('does not call a section empty when every entry in it is malformed', () => {
+    const result: LintResult = lintMarkdown(
+      HEADER + '## References\n\n- completely broken text\n- 3.1 - Title (sideways - no such direction)\n',
+    );
+    const findings: ReadonlyArray<readonly [string, unknown]> = showReferencesFindings(result);
+
+    expect(findings.length).toBeGreaterThanOrEqual(2);
+    expect(findings.every(([severity]) => severity === 'error')).toBe(true);
+    expect(findings.some(([, cause]) => cause === 'references-empty')).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+});

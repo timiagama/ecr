@@ -26,6 +26,7 @@ import type {
   ReferenceEdge,
   ReferenceDirection,
 } from '../src/index.js';
+import { REFERENCES_EMPTY_CAUSE } from '../src/references-section-rule.js';
 import type {
   ReferencesSectionRuleResult,
 } from '../src/references-section-rule.js';
@@ -201,46 +202,72 @@ describe('Feature: List Node Must Immediately Follow the References Heading', ()
     expect(missingListDiagnostics).toHaveLength(0);
   });
 
+  // A section with no list is valid and reported as info (1#9.6, 1#12.3).
+  // These two scenarios expected an error until the rule itself set the
+  // severity; the facade used to downgrade it by matching the message text.
+
   it('Scenario: A non-list node immediately follows the References heading (no list items evaluated)', () => {
     // When a paragraph (or other non-list) node follows the References heading,
-    // no evaluateListItem calls are made. The finalise method should detect this.
+    // no evaluateListItem calls are made.
     const rule: ReferencesSectionRule = createRule();
     rule.evaluateHeading({ depth: 2, text: 'References' });
-    // No evaluateListItem calls — simulating a non-list node following the heading
     const result: ReferencesSectionRuleResult = rule.finalise();
 
-    // An error diagnostic must indicate a list must immediately follow
-    expect(result.diagnostics.length).toBeGreaterThanOrEqual(1);
-    const listDiagnostic: Diagnostic | undefined = result.diagnostics.find(
-      (diagnostic: Diagnostic) => {
-        return (
-          diagnostic.message.toLowerCase().includes('list') ||
-          diagnostic.message.toLowerCase().includes('follow')
-        );
-      },
-    );
-    expect(listDiagnostic).toBeDefined();
-    expect(listDiagnostic!.severity).toBe('error');
-    expect(listDiagnostic!.ruleId).toBe(REFERENCES_SECTION_RULE_ID);
+    expect(result.diagnostics).toHaveLength(1);
+    const emptyDiagnostic: Diagnostic = result.diagnostics[0]!;
+    expect(emptyDiagnostic.severity).toBe('info');
+    expect(emptyDiagnostic.ruleId).toBe(REFERENCES_SECTION_RULE_ID);
+    expect(emptyDiagnostic.data?.['cause']).toBe(REFERENCES_EMPTY_CAUSE);
+    expect(result.references).toHaveLength(0);
   });
 
   it('Scenario: The References heading is the last node in the document (no node follows)', () => {
-    // Same as non-list — no evaluateListItem calls, finalise detects the gap
     const rule: ReferencesSectionRule = createRule();
+    rule.evaluateHeading({ depth: 2, text: 'Introduction' });
     rule.evaluateHeading({ depth: 2, text: 'References' });
     const result: ReferencesSectionRuleResult = rule.finalise();
 
-    expect(result.diagnostics.length).toBeGreaterThanOrEqual(1);
-    const listDiagnostic: Diagnostic | undefined = result.diagnostics.find(
-      (diagnostic: Diagnostic) => {
-        return (
-          diagnostic.message.toLowerCase().includes('list') ||
-          diagnostic.message.toLowerCase().includes('follow')
-        );
-      },
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.severity).toBe('info');
+    expect(result.diagnostics[0]!.data?.['cause']).toBe(REFERENCES_EMPTY_CAUSE);
+  });
+
+  it('Scenario: Every entry is malformed, so the section is not empty', () => {
+    // Entries that fail validation were still declared; reporting the section
+    // as empty would describe the wrong problem.
+    const result: ReferencesSectionRuleResult = evaluateWithEntries([
+      'completely broken text',
+      '3.1 - Title (sideways - not a direction)',
+    ]);
+
+    expect(result.diagnostics.length).toBeGreaterThanOrEqual(2);
+    for (const diagnostic of result.diagnostics) {
+      expect(diagnostic.severity).toBe('error');
+      expect(diagnostic.data?.['cause']).not.toBe(REFERENCES_EMPTY_CAUSE);
+    }
+  });
+
+  it('Scenario: Duplicate entries only, so the section is not empty', () => {
+    const result: ReferencesSectionRuleResult = evaluateWithEntries([
+      '3.1 - Title (authority - one)',
+      '3.1 - Title (authority - two)',
+    ]);
+
+    const emptyDiagnostics: readonly Diagnostic[] = result.diagnostics.filter(
+      (diagnostic: Diagnostic) => diagnostic.data?.['cause'] === REFERENCES_EMPTY_CAUSE,
     );
-    expect(listDiagnostic).toBeDefined();
-    expect(listDiagnostic!.severity).toBe('error');
+    expect(emptyDiagnostics).toHaveLength(0);
+  });
+
+  it('Scenario: Multiple References headings with no entries report the duplicate, not emptiness', () => {
+    const rule: ReferencesSectionRule = createRule();
+    rule.evaluateHeading({ depth: 2, text: 'References' });
+    rule.evaluateHeading({ depth: 2, text: 'References' });
+    const result: ReferencesSectionRuleResult = rule.finalise();
+
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.severity).toBe('error');
+    expect(result.diagnostics[0]!.message).toContain('multiple References sections');
   });
 });
 
@@ -720,32 +747,15 @@ describe('Feature: ReferenceEdge Extraction', () => {
 
 describe('Feature: Empty References Section (List With No Items)', () => {
   it('Scenario: References heading followed by an empty list', () => {
-    // An empty list has zero items, so no evaluateListItem calls are made.
-    // However, the presence of the list node itself (as opposed to a paragraph
-    // or no node) must be signalled to the rule. We test the observable outcome:
-    // the rule should produce no "missing References" diagnostic and 0 edges.
-    //
-    // Note: The interface proposal's finalise() docs say that when the heading
-    // is present but no list items were evaluated, a "missing list" diagnostic
-    // is emitted. An empty list (0 items) is still a list node — so the traversal
-    // layer must signal this differently from "no list at all". This test verifies
-    // the scenario where the empty list IS present.
-    //
-    // If the implementation distinguishes empty-list from no-list via some signal
-    // (e.g., evaluateListItem with a sentinel, or a separate method), we call that.
-    // Per the current interface, an empty list with 0 items means 0 evaluateListItem
-    // calls are made but the list node was present. The evaluateHeading + finalise
-    // path with 0 list items may or may not produce a "missing list" diagnostic.
-    //
-    // Based on the contract: "no diagnostic is produced for References section presence"
-    // and "0 ReferenceEdge artefacts are extracted". We verify:
+    // An empty list, a non-list node and no node at all all reach the rule
+    // as zero evaluateListItem calls, and all declare the same thing: the
+    // document references nothing (1#9.6). That is valid, reported as info.
     const rule: ReferencesSectionRule = createRule();
     rule.evaluateHeading({ depth: 2, text: 'References' });
-    // Simulate an empty list: 0 list items
-    // Per the contract, this should not produce a presence diagnostic.
-    // The implementation may need an explicit signal for "list node present but empty".
-    // For now, we test the expected contract outcome.
     const result: ReferencesSectionRuleResult = rule.finalise();
+
+    expect(result.diagnostics.map((diagnostic: Diagnostic) => diagnostic.severity))
+      .toEqual(['info']);
 
     // No "missing References section" diagnostic
     const missingRefDiagnostics: readonly Diagnostic[] = result.diagnostics.filter(

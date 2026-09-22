@@ -34,8 +34,8 @@ export interface ExpectedDiagnostic {
    * Machine-readable cause in `data.cause`, where the rule defines one.
    *
    * A message fragment alone is not enough: `because: 'References'` is
-   * satisfied by today's generic "References section has no list items", the
-   * wrong problem reported for the right document.
+   * satisfied by the generic "References section has no entries", the wrong
+   * problem reported for the right document.
    */
   readonly cause?: string;
 }

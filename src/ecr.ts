@@ -10,17 +10,12 @@
  * per-document validation to {@link PerDocumentVisitor} and
  * corpus-wide integrity checks to {@link CorpusValidator}.
  *
- * The facade applies two orchestration-level policies that refine
- * strict rule-level behaviour:
+ * Per-document results are returned exactly as the visitor produces
+ * them: every severity is set by the rule that reports the finding.
  *
- * 1. **Empty References section tolerance**: An ECR document whose
- *    `## References` section contains no list items is structurally
- *    valid (it simply declares no external dependencies). The
- *    underlying ECR103 rule emits this as an error, but the facade
- *    downgrades it to `info` severity so it does not prevent the
- *    document from passing per-document validation.
+ * The facade applies one orchestration-level policy:
  *
- * 2. **Cross-document duplicate SectionID detection**: The corpus
+ * **Cross-document duplicate SectionID detection**: The corpus
  *    validator only sees SectionIDs that survive per-document
  *    extraction (i.e., those that pass ECR102). A heading like
  *    `## 3.1#1 - X` inside a document with DocID `4.1` fails ECR102
@@ -68,23 +63,6 @@ export interface CorpusDocumentInput {
 // ---------------------------------------------------------------------------
 
 /**
- * The rule ID emitted by ECR103 (References Section Rule).
- *
- * Used to identify diagnostics that may need facade-level reclassification.
- */
-const REFERENCES_SECTION_RULE_ID: string = 'ECR103';
-
-/**
- * Substring that identifies the ECR103 "empty references list" diagnostic.
- *
- * When a `## References` heading is present but no list items follow it,
- * ECR103 emits an error with a message containing this substring.
- * The facade downgrades this specific diagnostic to `info` severity.
- */
-const EMPTY_REFERENCES_LIST_MESSAGE_SUBSTRING: string =
-  'References section has no list items';
-
-/**
  * The corpus-level rule ID for duplicate SectionIDs detected by the facade.
  */
 const CORPUS_DUPLICATE_SECTION_ID_RULE_ID: string = 'corpus/duplicate-section-id';
@@ -108,9 +86,7 @@ export class Ecr {
    * Lint a single Markdown document against per-document ECR structural invariants.
    *
    * Creates a {@link PerDocumentVisitor} for the given document and delegates
-   * the linting operation to it. The raw result is then post-processed by the
-   * facade to apply orchestration-level policies (e.g., downgrading the
-   * "empty References list" diagnostic from error to info).
+   * the linting operation to it.
    *
    * @param uri - Opaque, host-provided URI identifying the document instance.
    * @param markdownText - Raw Markdown text of the document.
@@ -127,10 +103,7 @@ export class Ecr {
       ...(version !== undefined ? { version } : {}),
     });
 
-    const rawLintResult: LintResult = visitor.lint(markdownText);
-    const lintResult: LintResult = this.postProcessLintResult(rawLintResult);
-
-    return lintResult;
+    return visitor.lint(markdownText);
   }
 
   /**
@@ -194,110 +167,6 @@ export class Ecr {
     };
 
     return corpusResult;
-  }
-
-  // -------------------------------------------------------------------------
-  // Private: Post-processing
-  // -------------------------------------------------------------------------
-
-  /**
-   * Post-processes a raw {@link LintResult} to apply facade-level policies.
-   *
-   * Currently applies one policy:
-   * - Downgrades the ECR103 "References section has no list items" diagnostic
-   *   from `error` to `info`. An empty References section is structurally
-   *   valid at the facade level (it simply means no external dependencies).
-   *
-   * After reclassification, the `ok` flag is recomputed based on the
-   * adjusted diagnostics.
-   *
-   * @param rawResult - The raw lint result from the {@link PerDocumentVisitor}
-   * @returns The post-processed lint result with adjusted diagnostics and `ok` flag
-   */
-  private postProcessLintResult(rawResult: LintResult): LintResult {
-    const adjustedDiagnostics: readonly Diagnostic[] =
-      this.reclassifyEmptyReferencesDiagnostic(rawResult.diagnostics);
-
-    // If nothing changed, return the raw result as-is to preserve
-    // referential identity for determinism tests
-    if (adjustedDiagnostics === rawResult.diagnostics) {
-      return rawResult;
-    }
-
-    const isPassable: boolean = this.tellAllDiagnosticsPassable(adjustedDiagnostics);
-
-    const adjustedResult: LintResult = {
-      input: rawResult.input,
-      ok: isPassable,
-      diagnostics: adjustedDiagnostics,
-      ...(rawResult.extracted !== undefined
-        ? { extracted: rawResult.extracted }
-        : {}),
-    };
-
-    return adjustedResult;
-  }
-
-  /**
-   * Scans a diagnostics array for the ECR103 "empty references list"
-   * diagnostic and, if found, returns a new array with that diagnostic's
-   * severity downgraded from `error` to `info`.
-   *
-   * If no such diagnostic is found, the original array is returned
-   * unchanged (same reference) to enable short-circuit identity checks.
-   *
-   * @param diagnostics - The original diagnostics from a lint result
-   * @returns The adjusted diagnostics array, or the original if no changes were needed
-   */
-  private reclassifyEmptyReferencesDiagnostic(
-    diagnostics: readonly Diagnostic[],
-  ): readonly Diagnostic[] {
-    // Check whether any diagnostic needs reclassification before
-    // allocating a new array, to preserve referential identity
-    // for determinism tests when no changes are needed.
-    const needsReclassification: boolean = diagnostics.some(
-      (diagnostic: Diagnostic): boolean =>
-        diagnostic.ruleId === REFERENCES_SECTION_RULE_ID &&
-        diagnostic.severity === 'error' &&
-        diagnostic.message.includes(EMPTY_REFERENCES_LIST_MESSAGE_SUBSTRING),
-    );
-
-    if (!needsReclassification) {
-      return diagnostics;
-    }
-
-    const adjusted: readonly Diagnostic[] = diagnostics.map(
-      (diagnostic: Diagnostic): Diagnostic => {
-        if (
-          diagnostic.ruleId === REFERENCES_SECTION_RULE_ID &&
-          diagnostic.severity === 'error' &&
-          diagnostic.message.includes(EMPTY_REFERENCES_LIST_MESSAGE_SUBSTRING)
-        ) {
-          return {
-            ...diagnostic,
-            severity: 'info',
-          };
-        }
-
-        return diagnostic;
-      },
-    );
-
-    return adjusted;
-  }
-
-  /**
-   * Determines whether all diagnostics are passable (no error-severity entries).
-   *
-   * @param diagnostics - The diagnostics to check
-   * @returns `true` if no error diagnostics are present, `false` otherwise
-   */
-  private tellAllDiagnosticsPassable(
-    diagnostics: readonly Diagnostic[],
-  ): boolean {
-    return !diagnostics.some(
-      (diagnostic: Diagnostic): boolean => diagnostic.severity === 'error',
-    );
   }
 
   // -------------------------------------------------------------------------

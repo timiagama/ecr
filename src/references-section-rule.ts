@@ -203,6 +203,9 @@ export const REFERENCES_ENTRY_SOURCE_FORM_CAUSE: string = 'references-entry-sour
 /** The `data.cause` of an entry whose relationship parenthetical never closes. */
 export const REFERENCES_ENTRY_UNBALANCED_CAUSE: string = 'references-entry-unbalanced';
 
+/** The `data.cause` of a References section with no entries (reported as info). */
+export const REFERENCES_EMPTY_CAUSE: string = 'references-empty';
+
 /**
  * Where a References entry's relationship parenthetical begins, or why it
  * cannot be located.
@@ -227,7 +230,8 @@ const AFTER_ENTRY_DOC_ID: RegExp = /^[^0-9.#]/;
 // ---------------------------------------------------------------------------
 
 /**
- * The severity used for all References Section Rule diagnostics.
+ * The severity of every References Section Rule diagnostic except the
+ * empty-section finding, which is information (1#9.6, 1#12.3).
  *
  * Per 1#9.8, violation of any per-document structural invariant is an ERROR.
  */
@@ -384,6 +388,12 @@ export class ReferencesSectionRule {
   private sectionMisplaced: boolean;
 
   /**
+   * Number of list items evaluated under the References heading, valid or
+   * not. Zero means the section declares no entries (1#9.6).
+   */
+  private evaluatedListItemCount: number;
+
+  /**
    * Constructs a new References Section Rule evaluator.
    *
    * @param options - Configuration including the document URI, established DocID,
@@ -400,6 +410,7 @@ export class ReferencesSectionRule {
     this.sourceLines =
       options.sourceText === undefined ? undefined : new SourceLines(options.sourceText);
     this.sectionMisplaced = false;
+    this.evaluatedListItemCount = 0;
   }
 
   /**
@@ -500,6 +511,8 @@ export class ReferencesSectionRule {
     if (this.referencesHeadingCount === 0) {
       return;
     }
+
+    this.evaluatedListItemCount += 1;
 
     const text: string = listItemNodeData.text;
     const range: PositionRange | undefined = listItemNodeData.range;
@@ -649,8 +662,8 @@ export class ReferencesSectionRule {
    *
    * - Zero References headings: emits a "missing References section" error diagnostic
    * - Multiple References headings: emits a "multiple References sections" error diagnostic
-   * - Exactly one References heading with no list items: emits a "missing list" error diagnostic
-   *   (indicating no list node immediately follows the heading)
+   * - Exactly one References heading with no list items: emits an "empty section" info
+   *   diagnostic, since an empty section is valid (1#9.6)
    *
    * @returns The complete rule result including all diagnostics and extracted reference edges
    */
@@ -666,14 +679,20 @@ export class ReferencesSectionRule {
         `but exactly one is required.`,
       );
       this.collectedDiagnostics.push(diagnostic);
-    } else if (
-      this.referencesHeadingCount === 1 &&
-      this.collectedReferences.length === 0 &&
-      !this.tellHasListItemDiagnostics()
-    ) {
+    } else if (this.evaluatedListItemCount === 0) {
+      // Valid, and reported as information (1#9.6, 1#12.3): an empty section
+      // states that the document references nothing. The severity is set
+      // here, where the rule is defined, rather than downgraded afterwards by
+      // a caller matching this message's wording -- which reverted to an
+      // error for anyone using the rule directly, and would have done so for
+      // everyone the day the message was reworded.
       const diagnostic: Diagnostic = this.createDiagnostic(
-        'References section has no list items. ' +
-        'A list node must immediately follow the ## References heading.',
+        'References section has no entries, which declares that this document ' +
+        'references no other document. If it does, list each one beneath the ' +
+        '## References heading.',
+        undefined,
+        { cause: REFERENCES_EMPTY_CAUSE },
+        'info',
       );
       this.collectedDiagnostics.push(diagnostic);
     }
@@ -1115,22 +1134,25 @@ export class ReferencesSectionRule {
   /**
    * Creates a diagnostic object for the References Section Rule.
    *
-   * All diagnostics share the same rule ID ({@link REFERENCES_SECTION_RULE_ID}),
-   * severity (error), and document URI.
+   * All diagnostics share the same rule ID ({@link REFERENCES_SECTION_RULE_ID})
+   * and document URI. Each is an error except the empty-section finding, which
+   * is information (1#9.6, 1#12.3).
    *
    * @param message - Human-readable description of the issue
    * @param range - Optional positional range within the source document
    * @param data - Optional machine-readable detail, such as a `cause`
+   * @param severity - Severity per 1#12; an error unless stated otherwise
    * @returns A fully populated diagnostic object
    */
   private createDiagnostic(
     message: string,
     range?: PositionRange,
     data?: Readonly<Record<string, unknown>>,
+    severity: DiagnosticSeverity = REFERENCES_SECTION_DIAGNOSTIC_SEVERITY,
   ): Diagnostic {
     const diagnostic: Diagnostic = {
       ruleId: REFERENCES_SECTION_RULE_ID,
-      severity: REFERENCES_SECTION_DIAGNOSTIC_SEVERITY,
+      severity,
       message,
       uri: this.uri,
       ...(range !== undefined ? { range } : {}),
@@ -1157,17 +1179,4 @@ export class ReferencesSectionRule {
     return `"${withNamedCharacters}"`;
   }
 
-  /**
-   * Determines whether any diagnostics have been emitted for list items
-   * during evaluation.
-   *
-   * Used by {@link finalise} to distinguish between "no list items at all"
-   * (which indicates a missing list node) and "list items were present but
-   * all failed validation" (which does not indicate a missing list node).
-   *
-   * @returns `true` if at least one list-item-related diagnostic has been emitted
-   */
-  private tellHasListItemDiagnostics(): boolean {
-    return this.collectedDiagnostics.length > 0;
-  }
 }
