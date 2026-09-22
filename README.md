@@ -191,7 +191,7 @@ grep -rInE "([Ss]ee|[Pp]er) 8\.1#3([^0-9]|$)" docs/
 ```
 
 The reverse search is where ECR exposes relationships the target section
-cannot know about. On the example corpus it returns five documents across
+cannot know about. On the [example corpus](examples/docs/) it returns five documents across
 four folders, three of which cite `8.1#3.2` specifically: downstream
 documents a change to the retry bounds could break. One of them, settlement, appears nowhere in the orchestration contract.
 
@@ -200,7 +200,7 @@ sentence is still a reference, and a pattern that misses it under-reports the
 exact thing you are searching for. The `([^0-9]|$)` ending stops `8.1#3` also
 matching `8.1#30`. Matching a whole document rather than its sections needs a
 stronger guard, because `.` and `#` are not word boundaries — the supplied
-coding agent navigation protocol carries the tested pattern.
+[coding agent navigation protocol](protocol/navigation-protocol.md) carries the tested pattern.
 
 ## Why `grep` is enough
 
@@ -229,7 +229,7 @@ I converted a documentation corpus to ECR: **47 Markdown files**, 40 carrying
 413 References entries plus 162 inline `see`/`per` citations, 95 of them
 section-precise.
 
-Then I pointed a coding agent at the navigation protocol, told it to use ECR,
+Then I pointed a coding agent at the [navigation protocol](protocol/navigation-protocol.md), told it to use ECR,
 and started building. It produced around **19,000 lines of TypeScript across
 124 source files** with **34 test files**. Retrieval was `grep`. There was no
 server, no index, no embedding model and no MCP tool in the loop — the agent
@@ -253,7 +253,7 @@ npx @timiagama/ecr stats ./docs   # measure the structure you already have
 
 ### Try it on the example corpus
 
-A small example corpus ships with the package, so you can try the tool before
+A small [example corpus](examples/docs/) ships with the package, so you can try the tool before
 pointing it at your own documents:
 
 ```bash
@@ -389,6 +389,9 @@ linter that implements it.
   — why identifiers carry a `#`
 - [Navigation protocol](protocol/navigation-protocol.md) — the instructions
   you give your coding agent
+- [Example corpus](examples/docs/) — a small example corpus of nine documents
+  across four folders, to try the tool on and to see ECR in use;
+  `npx @timiagama/ecr lint --example` lints it
 
 ## Licence
 

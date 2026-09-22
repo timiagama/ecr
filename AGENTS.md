@@ -116,8 +116,8 @@ either. Two consequences:
   back to Git's `usr\bin` when it is not on PATH. A missing engine is an error,
   never a silent skip.
 
-CI runs the first six on Linux and Windows against Node 22 and 24. The example
-corpus is covered separately, by a job that installs the packed tarball into a
+CI runs all seven on Linux and Windows against Node 22 and 24. The example
+corpus is also checked by a separate job that installs the packed tarball into a
 fresh project and runs the binary through `node_modules/.bin`. That job exists
 because an entry point reached through a symlink can silently exit 0 without
 running, which the in-process tests cannot see.
