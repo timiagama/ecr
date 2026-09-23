@@ -1,0 +1,73 @@
+name: Release
+
+# A release is a deliberate act: pushing a tag such as v0.1.0. Nothing is
+# published by an ordinary push to main, and nothing is published by a pull
+# request, however it is authored.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  # Lets the job prove to npm which repository and workflow produced the
+  # tarball, which is what a provenance statement attests to.
+  id-token: write
+
+jobs:
+  release:
+    name: Stage ${{ github.ref_name }} on npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Node 24 for npm 11: staged publishing needs 11.15.0 or later, and
+      # Node 22 still ships npm 10.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      # A tag that disagrees with package.json would publish a version nobody
+      # asked for, under a name that says otherwise. Stop before anything is
+      # built rather than after it is staged.
+      - name: Check the tag matches the version being published
+        run: |
+          set -euo pipefail
+          tagged="${GITHUB_REF_NAME#v}"
+          declared="$(node -p 'require("./package.json").version')"
+
+          if [ "$tagged" != "$declared" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${declared}." >&2
+            exit 1
+          fi
+
+          echo "Releasing ${declared}."
+
+      # All seven gates, on Linux, against the commit being released. This
+      # also produces dist/, which the published tarball carries.
+      - run: npm run verify
+
+      # What the tarball will contain, in the log, before it goes anywhere.
+      - name: Show the tarball contents
+        run: npm pack --dry-run
+
+      # Staged: this submits the release, it does not make it live. Nothing
+      # reaches anyone until a maintainer approves it with 2FA, on npmjs.com
+      # or with `npm stage approve`.
+      #
+      # --provenance records where this tarball came from -- this repository,
+      # this workflow, this commit -- as a public, signed statement that
+      # anyone installing it can check.
+      - name: Stage the release
+        run: npm stage publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_ECR_STAGED }}
+
+      - name: Say what happens next
+        run: |
+          echo "Staged, not published. It goes live only when a maintainer approves it."
+          echo "Approve at https://www.npmjs.com/package/@timiagama/ecr (Versions -> Staged),"
+          echo "or with npm 11.15+: npm stage list @timiagama/ecr && npm stage approve <id>"
