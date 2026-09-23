@@ -7,6 +7,7 @@
  * source, so the same corpus always yields the same counts.
  */
 
+import { UNPARSABLE_DOCUMENT_RULE_ID } from '../per-document-visitor.js';
 import type { CorpusResult, ReferenceDirection, ExtractedDocument } from '../types.js';
 
 /**
@@ -47,6 +48,23 @@ export interface CorpusStatisticsReport {
   readonly sectionPreciseInlineReferences: number;
   /** Every edge in the corpus: References entries plus inline references. */
   readonly totalEdges: number;
+  /**
+   * Whether every input document was parsed successfully. This does not imply
+   * ECR conformance or complete extraction.
+   *
+   * A document that was parsed but has no recoverable DocID contributes
+   * nothing to any count, and one with structural errors contributes whatever
+   * did pass validation; both leave this `true`, because both were parsed.
+   * Only a document the parser could not read at all makes it `false`, and
+   * {@link unparsable} names those documents.
+   */
+  readonly complete: boolean;
+  /**
+   * Documents the parser could not read at all, which contribute nothing.
+   * A document with ordinary validation errors is not listed here: it still
+   * contributes whatever passed validation.
+   */
+  readonly unparsable: readonly string[];
 }
 
 /**
@@ -54,9 +72,12 @@ export interface CorpusStatisticsReport {
  *
  * Only documents that produced extracted artefacts contribute, which means
  * every document with a valid H1 DocID. A document with other structural
- * errors still counts, but only the parts that passed validation: a malformed
- * heading or References entry is never extracted, so it adds nothing to the
- * totals. A document with no recoverable DocID contributes nothing at all.
+ * errors still counts, and contributes whatever was extracted from it: a
+ * heading or References entry that could not be read at all adds nothing,
+ * while one reported for something other than its structure -- a heading
+ * whose source form breaks the navigation guarantee, say -- is extracted and
+ * counted like any other. A document with no recoverable DocID contributes
+ * nothing at all.
  */
 export class CorpusStatistics {
   /** The validation result to summarise. */
@@ -78,6 +99,7 @@ export class CorpusStatistics {
    */
   public summarise(): CorpusStatisticsReport {
     const extractedDocuments: readonly ExtractedDocument[] = this.collectExtractedDocuments();
+    const unparsable: readonly string[] = this.collectUnparsableDocuments();
 
     let documentsWithReferences: number = 0;
     let sections: number = 0;
@@ -124,6 +146,8 @@ export class CorpusStatistics {
       inlineReferences,
       sectionPreciseInlineReferences,
       totalEdges: referenceEntries + inlineReferences,
+      complete: unparsable.length === 0,
+      unparsable,
     };
   }
 
@@ -142,6 +166,22 @@ export class CorpusStatistics {
     }
 
     return extracted;
+  }
+
+  /**
+   * Names the documents the parser could not read, so that a reader knows
+   * what these counts leave out rather than taking them for the whole corpus.
+   *
+   * @returns Their URIs, in corpus order
+   */
+  private collectUnparsableDocuments(): readonly string[] {
+    return this.corpusResult.documents
+      .filter((entry): boolean =>
+        entry.result.diagnostics.some(
+          (diagnostic): boolean => diagnostic.ruleId === UNPARSABLE_DOCUMENT_RULE_ID,
+        ),
+      )
+      .map((entry): string => entry.uri);
   }
 
   /**

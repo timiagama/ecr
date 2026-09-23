@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import { EcrCommandLine, ArgumentParser } from '../src/cli.js';
 import type { CommandOutcome, ParsedArguments } from '../src/cli.js';
+import { DiagnosticReporter } from '../src/cli/diagnostic-reporter.js';
 
 const TEST_DIRECTORY: string = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT: string = join(TEST_DIRECTORY, '..');
@@ -37,6 +38,20 @@ let workspace: string;
 function writeDocument(path: string, contents: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, contents, 'utf8');
+}
+
+/**
+ * Builds a document the parser cannot read: a link label nested deeply
+ * enough to exhaust the call stack inside the parser itself, which is
+ * about 16 KB of Markdown.
+ *
+ * @param docId - The DocID for its H1
+ * @returns The document's text
+ */
+function unparsableDocument(docId: string): string {
+  const bold: string = '**'.repeat(4000);
+
+  return `# ${docId} - Hostile\n\n[${bold}label${bold}](target.md)\n\n## References\n`;
 }
 
 beforeAll(() => {
@@ -140,6 +155,28 @@ describe('Feature: lint', () => {
     expect(json.diagnostics).toContainEqual(
       expect.objectContaining({ path: '5.1.md', ruleId: 'corpus/reference-title-mismatch' }),
     );
+  });
+
+  // "checked" is what the summary can honestly claim: a document the parser
+  // could not read was attempted, and counted, but nothing in it was validated.
+  it('says how many documents it checked, and how many it could not parse', { timeout: 30000 }, () => {
+    const corpus: string = join(workspace, 'checked-summary');
+    writeDocument(join(corpus, 'sound.md'), '# 3.1 - Sound\n\n## References\n');
+    writeDocument(join(corpus, 'hostile.md'), unparsableDocument('4.2'));
+
+    const outcome: CommandOutcome = cli.run(['lint', corpus]);
+
+    expect(outcome.exitCode).toBe(EXIT_VALIDATION_FAILED);
+    expect(outcome.output).toContain(
+      '2 document(s) checked: 1 error(s), 0 warning(s). 1 document(s) could not be parsed.',
+    );
+  });
+
+  it('says nothing about parsing when every document parsed', () => {
+    const outcome: CommandOutcome = cli.run(['lint', EXAMPLE_CORPUS]);
+
+    expect(outcome.output).toContain('9 document(s) checked, no errors.');
+    expect(outcome.output).not.toContain('could not be parsed');
   });
 
   it('exits 1 and names the rule when a document is non-conforming', () => {
@@ -278,6 +315,58 @@ describe('Feature: stats', () => {
 
     expect(outcome.output).not.toContain('not followed');
     expect(outcome.output.endsWith('\n')).toBe(true);
+  });
+
+  // A document the parser cannot read contributes nothing to any count, so
+  // measuring the rest and saying nothing would misreport the corpus.
+  it('names the documents it could not parse, in text and in JSON', { timeout: 30000 }, () => {
+    const corpus: string = join(workspace, 'stats-unparsable');
+    writeDocument(join(corpus, '5.1.md'), '# 5.1 - Doc\n\n## References\n');
+    writeDocument(join(corpus, 'hostile.md'), unparsableDocument('2'));
+
+    const pretty: CommandOutcome = cli.run(['stats', corpus]);
+
+    expect(pretty.output).toContain('1 document(s) could not be parsed, so they are not counted above:');
+    expect(pretty.output).toContain('hostile.md');
+    expect(pretty.output).toContain('These statistics describe the rest of the corpus.');
+
+  });
+
+  // The JSON form of the same thing, without paying twice to parse a 16 KB
+  // document that cannot be parsed: the reporter is given the summary a
+  // corpus with an unreadable document produces.
+  it('marks the JSON statistics incomplete and names the documents left out', () => {
+    const report: string = new DiagnosticReporter('json').reportStatistics(
+      {
+        documents: 1,
+        documentsWithReferences: 0,
+        sections: 0,
+        docIds: 1,
+        sectionIds: 0,
+        referenceEntries: 0,
+        referencesByDirection: { authority: 0, constraint: 0, contract: 0, dependency: 0 },
+        inlineReferences: 0,
+        sectionPreciseInlineReferences: 0,
+        totalEdges: 0,
+        complete: false,
+        unparsable: ['hostile.md'],
+      },
+      [],
+    );
+
+    expect(JSON.parse(report)).toMatchObject({ complete: false, unparsable: ['hostile.md'] });
+  });
+
+  it('says the statistics are complete when every document parsed', () => {
+    const outcome: CommandOutcome = cli.run(['stats', EXAMPLE_CORPUS, '--format', 'json']);
+    const json = JSON.parse(outcome.output) as {
+      readonly complete: boolean;
+      readonly unparsable: readonly string[];
+    };
+
+    expect(json.complete).toBe(true);
+    expect(json.unparsable).toEqual([]);
+    expect(cli.run(['stats', EXAMPLE_CORPUS]).output).not.toContain('could not be parsed');
   });
 
   it('measures the example corpus', () => {
@@ -425,6 +514,60 @@ describe('Feature: --example runs against the bundled example corpus', () => {
     const outcome: CommandOutcome = cli.run(['lint', '--example']);
 
     expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
-    expect(outcome.output).toContain('9 document(s) validated, no errors.');
+    expect(outcome.output).toContain('9 document(s) checked, no errors.');
+  });
+});
+
+describe('Feature: A document cannot take over the terminal it is reported in', () => {
+  const cli: EcrCommandLine = new EcrCommandLine();
+  /** The character that opens an ANSI escape sequence. */
+  const ESCAPE: string = '\u001b';
+
+  /**
+   * Writes a document whose title carries a screen-clearing sequence, which
+   * the report quotes back.
+   *
+   * @param name - Directory to write it in, within the workspace
+   * @returns Path of the corpus directory
+   */
+  function writeHostileTitle(name: string): string {
+    const corpus: string = join(workspace, name);
+    writeDocument(
+      join(corpus, 'hostile.md'),
+      `# Title ${ESCAPE}[2J${ESCAPE}[H${ESCAPE}[31mINJECTED${ESCAPE}[0m\n\n## References\n\n- 2 - Other (dependency - depends on this)\n`,
+    );
+
+    return corpus;
+  }
+
+  it('shows the escape sequences in a title rather than printing them', () => {
+    const outcome: CommandOutcome = cli.run(['lint', writeHostileTitle('hostile-pretty')]);
+
+    expect(outcome.output).not.toContain(ESCAPE);
+    expect(outcome.output).toContain('\\u001b[2J');
+    // The title is still reported, and still readable.
+    expect(outcome.output).toContain('INJECTED');
+  });
+
+  it('leaves the JSON form as it is, where the data is escaped already', () => {
+    const outcome: CommandOutcome = cli.run([
+      'lint',
+      writeHostileTitle('hostile-json'),
+      '--format',
+      'json',
+    ]);
+    const report: { diagnostics: readonly { message: string }[] } = JSON.parse(outcome.output) as {
+      diagnostics: readonly { message: string }[];
+    };
+
+    expect(outcome.output).not.toContain(ESCAPE);
+    expect(report.diagnostics[0]?.message).toContain(`${ESCAPE}[2J`);
+  });
+
+  it('shows them in a path it could not read, too', () => {
+    const outcome: CommandOutcome = cli.run(['lint', join(workspace, `missing${ESCAPE}[2J`)]);
+
+    expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
+    expect(outcome.output).not.toContain(ESCAPE);
   });
 });

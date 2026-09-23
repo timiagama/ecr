@@ -7,6 +7,8 @@
  * and for tooling built on top of the CLI.
  */
 
+import { showControlCharacters } from './safe-text.js';
+import { UNPARSABLE_DOCUMENT_RULE_ID } from '../per-document-visitor.js';
 import type { CorpusResult, Diagnostic, DiagnosticSeverity } from '../types.js';
 import type { CorpusStatisticsReport, DirectionCounts } from './corpus-statistics.js';
 
@@ -118,6 +120,19 @@ export class DiagnosticReporter {
 
     const direction: DirectionCounts = statistics.referencesByDirection;
     const links: readonly string[] = DiagnosticReporter.listNotFollowed(notFollowedPaths);
+    // A document the parser could not read contributes nothing to any of
+    // these numbers, so saying which ones, and that the numbers are therefore
+    // partial, is the difference between a measurement and a misreading.
+    const unparsable: readonly string[] =
+      statistics.unparsable.length === 0
+        ? []
+        : [
+            `  ${String(statistics.unparsable.length)} document(s) could not be parsed, ` +
+            'so they are not counted above:',
+            ...statistics.unparsable.map((path: string): string => `    ${path}`),
+            '  These statistics describe the rest of the corpus.',
+            '',
+          ];
     const lines: readonly string[] = [
       '',
       '  Corpus structure',
@@ -140,11 +155,26 @@ export class DiagnosticReporter {
       '',
       `  total edges                    ${String(statistics.totalEdges)}`,
       '',
+      ...unparsable,
       ...links,
       ...(links.length > 0 ? [''] : []),
     ];
 
-    return lines.join('\n');
+    return showControlCharacters(lines.join('\n'));
+  }
+
+  /**
+   * Counts the documents the parser could not read.
+   *
+   * @param corpusResult - The result being reported
+   * @returns How many documents produced an unparsable-document diagnostic
+   */
+  private static countUnparsable(corpusResult: CorpusResult): number {
+    return corpusResult.documents.filter((entry): boolean =>
+      entry.result.diagnostics.some(
+        (diagnostic: Diagnostic): boolean => diagnostic.ruleId === UNPARSABLE_DOCUMENT_RULE_ID,
+      ),
+    ).length;
   }
 
   /**
@@ -208,17 +238,28 @@ export class DiagnosticReporter {
     }
 
     const documentCount: string = String(corpusResult.documents.length);
+
+    // "checked" covers every document the command attempted, which is not the
+    // same as every document having been validated: one the parser could not
+    // read was attempted and counted, but nothing in it was validated. Those
+    // are then stated outright, and their errors are in the total already.
+    const unparsableCount: number = DiagnosticReporter.countUnparsable(corpusResult);
+    const unparsableNote: string =
+      unparsableCount > 0
+        ? ` ${String(unparsableCount)} document(s) could not be parsed.`
+        : '';
+
     if (totals.errors === 0 && totals.warnings > 0) {
       lines.push(
-        `  ${documentCount} document(s) validated, no errors, ` +
-        `${String(totals.warnings)} warning(s).`,
+        `  ${documentCount} document(s) checked, no errors, ` +
+        `${String(totals.warnings)} warning(s).${unparsableNote}`,
       );
     } else if (totals.errors === 0) {
-      lines.push(`  ${documentCount} document(s) validated, no errors.`);
+      lines.push(`  ${documentCount} document(s) checked, no errors.${unparsableNote}`);
     } else {
       lines.push(
-        `  ${documentCount} document(s) validated: ` +
-        `${String(totals.errors)} error(s), ${String(totals.warnings)} warning(s).`,
+        `  ${documentCount} document(s) checked: ` +
+        `${String(totals.errors)} error(s), ${String(totals.warnings)} warning(s).${unparsableNote}`,
       );
     }
 
@@ -229,7 +270,10 @@ export class DiagnosticReporter {
     lines.push(...DiagnosticReporter.listNotFollowed(notFollowedPaths));
 
     lines.push('');
-    return lines.join('\n');
+
+    // Every line here can carry text quoted from a document or a path from
+    // the disk, so the whole report is made safe to print in one place.
+    return showControlCharacters(lines.join('\n'));
   }
 
   /**

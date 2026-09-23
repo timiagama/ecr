@@ -32,6 +32,7 @@ import type { InstallExclusion, ProjectIgnoreRead } from './cli/project-ignore.j
 import { CorpusStatistics } from './cli/corpus-statistics.js';
 import { DiagnosticReporter } from './cli/diagnostic-reporter.js';
 import type { ReportFormat } from './cli/diagnostic-reporter.js';
+import { showControlCharacters } from './cli/safe-text.js';
 
 /** Commands the CLI accepts. */
 export type CommandName = 'lint' | 'stats' | 'init';
@@ -527,12 +528,16 @@ export class EcrCommandLine {
       }
     }
 
+    // Success says where the documentation went, in a name the user gave,
+    // so it is made safe to print for the same reason a failure is.
     return this.succeed(
-      `\n  Installed the ECR documentation in ${displayedDestination}\n\n` +
-      `  Start with ${join(displayedDestination, 'README.md')}\n` +
-      `  Point your coding agent at ${join(displayedDestination, 'protocol', 'navigation-protocol.md')}\n` +
-      '  It is the half that does the navigating; the linter only checks structure.\n\n' +
-      `${ignoreNote}\n`,
+      showControlCharacters(
+        `\n  Installed the ECR documentation in ${displayedDestination}\n\n` +
+        `  Start with ${join(displayedDestination, 'README.md')}\n` +
+        `  Point your coding agent at ${join(displayedDestination, 'protocol', 'navigation-protocol.md')}\n` +
+        '  It is the half that does the navigating; the linter only checks structure.\n\n' +
+        `${ignoreNote}\n`,
+      ),
     );
   }
 
@@ -578,7 +583,9 @@ export class EcrCommandLine {
    * @returns The outcome
    */
   private fail(output: string): CommandOutcome {
-    return { output, stream: 'stderr', exitCode: EXIT_USAGE_ERROR };
+    // A message names paths that came from the disk, so it is made safe to
+    // print for the same reason a report of a document's text is.
+    return { output: showControlCharacters(output), stream: 'stderr', exitCode: EXIT_USAGE_ERROR };
   }
 
   /**

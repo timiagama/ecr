@@ -225,6 +225,20 @@ describe('Feature: init refuses anything it cannot do cleanly', () => {
     expect(readdirSync(project)).toEqual([]);
   });
 
+  it('shows a directory name that would reorder the message it appears in', () => {
+    // A right-to-left override makes the text after it read backwards, so a
+    // name carrying one could rewrite what the success message appears to
+    // say. The installation itself is fine: it is the report that is made safe.
+    const name: string = `ecr‮docs`;
+
+    const outcome: CommandOutcome = cli.run(['init', name]);
+
+    expect(outcome.exitCode).toBe(EXIT_SUCCESS);
+    expect(outcome.output).not.toContain('‮');
+    expect(outcome.output).toContain('ecr\\u202edocs');
+    expect(existsSync(join(project, name, 'README.md'))).toBe(true);
+  });
+
   it('refuses to install when .ecrignore cannot be read, and installs nothing', () => {
     mkdirSync(join(project, '.ecrignore'));
 
@@ -314,7 +328,7 @@ describe('Feature: Linting from the project root sees only the project', () => {
     const outcome: CommandOutcome = cli.run(['lint', 'node_modules/vendored/docs']);
 
     expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
-    expect(outcome.output).toContain('1 document(s) validated');
+    expect(outcome.output).toContain('1 document(s) checked');
   });
 
   it('treats a root beneath an excluded directory as excluded too, without walking it', () => {
@@ -380,7 +394,7 @@ describe('Feature: .ecrignore and --ignore keep their own bases', () => {
     const outcome: CommandOutcome = installed.run(['lint', '--example']);
 
     expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
-    expect(outcome.output).toContain('9 document(s) validated');
+    expect(outcome.output).toContain('9 document(s) checked');
   });
 
   it('still applies --ignore to the bundled example corpus', () => {
