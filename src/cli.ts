@@ -33,6 +33,8 @@ import { CorpusStatistics } from './cli/corpus-statistics.js';
 import { DiagnosticReporter } from './cli/diagnostic-reporter.js';
 import type { ReportFormat } from './cli/diagnostic-reporter.js';
 import { showControlCharacters } from './cli/safe-text.js';
+import { DEFAULT_SUPERVISION_LIMITS, SUPERVISED_VARIABLE, Supervisor } from './cli/supervisor.js';
+import type { CompletedRun, SupervisedOutcome, SupervisionLimits } from './cli/supervisor.js';
 
 /** Commands the CLI accepts. */
 export type CommandName = 'lint' | 'stats' | 'init';
@@ -72,6 +74,14 @@ export interface ParsedArguments {
   readonly format: ReportFormat;
   /** Glob patterns excluding project-specific meta-documents. */
   readonly ignorePatterns: readonly string[];
+  /**
+   * Seconds a `lint` or `stats` run may take, when the command line said so;
+   * `0` for no limit, and absent when it did not say, which leaves whatever
+   * limit the run was configured with.
+   */
+  readonly timeoutSeconds?: number;
+  /** Mebibytes the run's heap may grow to, on the same terms. */
+  readonly maxMemoryMib?: number;
 }
 
 /**
@@ -83,6 +93,21 @@ export interface EcrCommandLineOptions {
   readonly workingDirectory?: string;
   /** The package's own root: where `init` copies from and `--example` reads. */
   readonly packageRoot?: string;
+  /**
+   * How to run `lint` and `stats` in a child process that can be stopped.
+   * Absent, they run in this process: the executable asks for supervision,
+   * because only it knows the script a child would have to run, and a host
+   * embedding the library bounds its own work.
+   */
+  readonly supervision?: SupervisionSettings;
+}
+
+/** How a supervised run is started and bounded. */
+export interface SupervisionSettings {
+  /** Path of the script the child runs: this package's executable. */
+  readonly entryPoint: string;
+  /** Limits overriding {@link DEFAULT_SUPERVISION_LIMITS}. */
+  readonly limits?: Partial<SupervisionLimits>;
 }
 
 /**
@@ -118,6 +143,26 @@ const INSTALLED_DOCUMENTATION: readonly string[] = [
   'examples',
 ];
 
+/** Every exit code this command itself produces. */
+const EXIT_CODES: readonly number[] = [EXIT_SUCCESS, EXIT_VALIDATION_FAILED, EXIT_USAGE_ERROR];
+
+/**
+ * How V8 says it has run out of heap. It says so differently depending on
+ * when it happens: "Reached heap limit" once running, "JavaScript heap out of
+ * memory" on an allocation, and "Fatal JavaScript out of memory" while it is
+ * still starting, which is what a limit of a megabyte or two produces.
+ */
+const HEAP_EXHAUSTED: RegExp = /Reached heap limit|out of memory/i;
+
+/**
+ * The longest time limit that can be applied: `spawnSync` takes milliseconds
+ * as a 32-bit count, which is about twenty-five days.
+ */
+const MAXIMUM_TIMEOUT_SECONDS: number = 2_147_483;
+
+/** The largest heap limit that can be applied, in mebibytes: a tebibyte. */
+const MAXIMUM_MEMORY_MIB: number = 1_048_576;
+
 /** Where `lint` and `stats` look when no directory is given. */
 const DEFAULT_CORPUS_DIRECTORY: string = 'docs';
 
@@ -142,10 +187,19 @@ const USAGE_TEXT: string = `
     --ignore <glob>          exclude paths; repeatable
     --example                lint or measure the example corpus bundled
                              with this package, instead of a directory
+    --timeout <seconds>      stop lint or stats if it takes longer
+                             (default: 120; 0 for no limit)
+    --max-memory <MiB>       cap the heap lint or stats may use
+                             (default: 2048; 0 for node's own default)
     --version                show the linter and spec versions
     --help                   show this message
 
   The directory defaults to ./docs, or to ./ecr for init.
+
+  lint and stats parse your documents in a separate process, so that a
+  document which takes unreasonably long to parse stops rather than hanging
+  the command. A run that has to be stopped prints nothing and exits 2,
+  because a report of a corpus that was never finished is not a report.
 
   Patterns in .ecrignore, in the directory the command runs from, are
   excluded too. They are relative to that directory; --ignore patterns are
@@ -185,6 +239,8 @@ export class ArgumentParser {
     let corpusRoot: string | undefined = undefined;
     let useExample: boolean = false;
     let format: ReportFormat = 'pretty';
+    let timeoutSeconds: number | undefined = undefined;
+    let maxMemoryMib: number | undefined = undefined;
     const ignorePatterns: string[] = [];
 
     for (let index: number = 0; index < rest.length; index += 1) {
@@ -219,6 +275,22 @@ export class ArgumentParser {
         continue;
       }
 
+      if (argument === '--timeout') {
+        timeoutSeconds = ArgumentParser.readWholeNumber(
+          rest[index + 1], '--timeout', 'seconds', MAXIMUM_TIMEOUT_SECONDS,
+        );
+        index += 1;
+        continue;
+      }
+
+      if (argument === '--max-memory') {
+        maxMemoryMib = ArgumentParser.readWholeNumber(
+          rest[index + 1], '--max-memory', 'mebibytes', MAXIMUM_MEMORY_MIB,
+        );
+        index += 1;
+        continue;
+      }
+
       if (argument.startsWith('--')) {
         throw new Error(`Unknown option "${argument}".`);
       }
@@ -244,7 +316,41 @@ export class ArgumentParser {
       useExample,
       format,
       ignorePatterns,
+      ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
+      ...(maxMemoryMib !== undefined ? { maxMemoryMib } : {}),
     };
+  }
+
+  /**
+   * Reads an option's value as a whole number of some unit, where zero means
+   * no limit.
+   *
+   * @param value - The argument following the option
+   * @param option - The option's name, for the message
+   * @param unit - What the number counts, for the message
+   * @param maximum - The largest value the limit can be applied as
+   * @returns The number
+   * @throws When the value is missing, is not a whole number, or is beyond what can be applied
+   */
+  private static readWholeNumber(
+    value: string | undefined,
+    option: string,
+    unit: string,
+    maximum: number,
+  ): number {
+    const parsed: number = value === undefined ? Number.NaN : Number(value);
+
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new Error(`${option} expects a whole number of ${unit}, or 0 for no limit.`);
+    }
+
+    // A limit too large to apply is not the same as no limit: passed on, it
+    // would fail inside the machinery that imposes it rather than here.
+    if (parsed > maximum) {
+      throw new Error(`${option} expects at most ${String(maximum)} ${unit}, or 0 for no limit.`);
+    }
+
+    return parsed;
   }
 
   /**
@@ -277,6 +383,9 @@ export class EcrCommandLine {
   /** The package's own root, holding `package.json` and what `init` installs. */
   private readonly packageRoot: string;
 
+  /** How to run the parsing commands in a child process, when asked to. */
+  private readonly supervision: SupervisionSettings | undefined;
+
   /**
    * Creates a command-line runner.
    *
@@ -288,6 +397,7 @@ export class EcrCommandLine {
     // Resolved relative to this module, so it is correct whether the CLI runs
     // from source, from `dist/`, or from an installed package.
     this.packageRoot = options.packageRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), '..');
+    this.supervision = options.supervision;
   }
 
   /**
@@ -324,6 +434,14 @@ export class EcrCommandLine {
     // other commands read a corpus that must already exist.
     if (parsed.command === 'init') {
       return this.runInit(corpusRoot, parsed.corpusRoot);
+    }
+
+    // Everything past this point parses documents, which is the work that
+    // cannot be bounded from the inside.
+    const supervision: SupervisionSettings | undefined = this.readSupervision();
+
+    if (supervision !== undefined) {
+      return this.runSupervised(supervision, argv, parsed);
     }
 
     // The bundled example belongs to the package, not the project, so the
@@ -564,6 +682,100 @@ export class EcrCommandLine {
     } catch (error: unknown) {
       return ProjectIgnoreFile.showReason(error);
     }
+  }
+
+  /**
+   * Reads how this invocation should bound its parsing, if at all.
+   *
+   * @returns The supervision settings, or `undefined` when this invocation does the work itself
+   */
+  private readSupervision(): SupervisionSettings | undefined {
+    // The child is this same executable, and must do the work rather than
+    // start a child of its own.
+    return process.env[SUPERVISED_VARIABLE] === '1' ? undefined : this.supervision;
+  }
+
+  /**
+   * Runs `lint` or `stats` in a child process with a time limit and a heap
+   * limit, and passes on what it produced.
+   *
+   * A child that had to be stopped produced no usable report, however much of
+   * one reached this process, so none of it is passed on: the invocation
+   * failed, and says why.
+   *
+   * @param settings - Where the child's script is, and any limits overriding the defaults
+   * @param argv - The arguments to pass on, exactly as they were given
+   * @param parsed - The same arguments, for the limits they carry
+   * @returns The child's output and exit code, or the reason it was stopped
+   */
+  private runSupervised(
+    settings: SupervisionSettings,
+    argv: readonly string[],
+    parsed: ParsedArguments,
+  ): CommandOutcome {
+    // What the command line asked for wins; what the run was configured with
+    // stands where the command line said nothing; the defaults are the rest.
+    const limits: SupervisionLimits = {
+      ...DEFAULT_SUPERVISION_LIMITS,
+      ...settings.limits,
+      ...(parsed.timeoutSeconds !== undefined ? { timeoutMs: parsed.timeoutSeconds * 1000 } : {}),
+      ...(parsed.maxMemoryMib !== undefined ? { memoryMib: parsed.maxMemoryMib } : {}),
+    };
+
+    const outcome: SupervisedOutcome = new Supervisor(
+      settings.entryPoint,
+      limits,
+      this.workingDirectory,
+    ).run(argv);
+
+    if (outcome.kind === 'stopped') {
+      return this.fail(`  ecr did not finish: ${outcome.reason}.\n`);
+    }
+
+    // Every code this command exits with means something. A child that ended
+    // with any other did not end as this command ends: it ran out of heap, or
+    // the runtime beneath it stopped. Passing such a code on would offer it
+    // as a verdict on the corpus, and on Windows as a number no caller could
+    // read.
+    if (!EXIT_CODES.includes(outcome.exitCode)) {
+      return this.fail(`  ecr did not finish: ${this.showAbnormalExit(outcome, limits)}.\n`);
+    }
+
+    // A verdict on a corpus comes with the report it is a verdict on. A child
+    // that exited 1 having printed nothing never got as far as validating,
+    // and passing that code on would read as a corpus full of errors.
+    if (outcome.stdout === '' && outcome.exitCode === EXIT_VALIDATION_FAILED) {
+      return this.fail(
+        `  ecr did not finish: the run failed without producing a report.\n${outcome.stderr}`,
+      );
+    }
+
+    // A command writes to one stream per invocation, so whichever the child
+    // used is the one this process writes to.
+    return outcome.stdout === ''
+      ? { output: outcome.stderr, stream: 'stderr', exitCode: outcome.exitCode }
+      : { output: outcome.stdout, stream: 'stdout', exitCode: outcome.exitCode };
+  }
+
+  /**
+   * Describes a child that ended in a way this command never ends.
+   *
+   * Running out of heap is worth naming, because it is the one such ending a
+   * user can do anything about, and the limit that caused it is one they set.
+   *
+   * @param outcome - What the child produced before it ended
+   * @param limits - The limits it was given
+   * @returns The reason, as a phrase completing "ecr did not finish..."
+   */
+  private showAbnormalExit(outcome: CompletedRun, limits: SupervisionLimits): string {
+    if (HEAP_EXHAUSTED.test(outcome.stderr)) {
+      return (
+        `it ran out of heap, limited to ${String(limits.memoryMib)} MiB. ` +
+        `Raise the limit with --max-memory <MiB>, or 0 for node's own default`
+      );
+    }
+
+    return `the run ended unexpectedly (exit ${String(outcome.exitCode)})`;
   }
 
   /**

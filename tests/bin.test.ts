@@ -118,6 +118,70 @@ describe('Feature: The installed binary runs when reached through a symlink', ()
     expect(run.stdout).toMatch(/total edges\s+38/);
   });
 
+  // The binary is what turns supervision on, so this is the only place the
+  // whole arrangement is exercised: a real document that takes unreasonable
+  // time to parse, a real child process, and a real limit stopping it.
+  it('stops a corpus it cannot parse in reasonable time, and reports nothing about it', () => {
+    const corpus: string = join(workspace, 'slow-to-parse');
+    mkdirSync(corpus, { recursive: true });
+    // Four thousand nested images parse successfully, in about a minute.
+    const nested: string = `${'!['.repeat(4000)}x${'](target.md)'.repeat(4000)}`;
+    writeFileSync(join(corpus, 'slow.md'), `# 1 - Slow\n\n${nested}\n\n## References\n`, 'utf8');
+    const started: number = Date.now();
+
+    const run: SpawnSyncReturns<string> = runLinkedBinary(['lint', corpus, '--timeout', '3']);
+
+    expect(run.status, run.stdout).toBe(2);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('did not finish');
+    expect(run.stderr).not.toContain('document(s) checked');
+    // Stopped at its limit rather than run to completion.
+    expect(Date.now() - started).toBeLessThan(30000);
+  }, 60000);
+
+  // A heap too small to start in is the one limit that kills the child
+  // outright rather than letting it report anything, and on Windows it exits
+  // with a number in the billions.
+  it('exits 2 when the run dies for want of heap, rather than passing on what it died with', () => {
+    const run: SpawnSyncReturns<string> = runLinkedBinary([
+      'lint', EXAMPLE_CORPUS, '--max-memory', '1',
+    ]);
+
+    expect(run.status, run.stderr).toBe(2);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('did not finish');
+    expect(run.stderr).not.toContain('v8::');
+  });
+
+  // The same guarantee as the command-line test of the child's directory, but
+  // through the real executable: the corpus is named relatively, and only the
+  // working directory says which one it is.
+  it('lints a corpus named relatively, from the directory it was run in', () => {
+    const project: string = join(workspace, 'relative-corpus');
+    mkdirSync(join(project, 'docs'), { recursive: true });
+    writeFileSync(
+      join(project, 'docs', 'only.md'),
+      '# 7.1 - The only document here\n\n## References\n',
+      'utf8',
+    );
+
+    const run: SpawnSyncReturns<string> = spawnSync(
+      process.execPath,
+      [linkedBinPath, 'lint', 'docs'],
+      { encoding: 'utf8', cwd: project },
+    );
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toContain('1 document(s) checked');
+  });
+
+  it('lints normally when the work fits well inside its limits', () => {
+    const run: SpawnSyncReturns<string> = runLinkedBinary(['lint', EXAMPLE_CORPUS, '--timeout', '60']);
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toContain('9 document(s) checked, no errors.');
+  });
+
   it('writes a usage error to stderr, leaving stdout empty for anything piping it', () => {
     const run: SpawnSyncReturns<string> = runLinkedBinary(['lint', join(workspace, 'missing'), '--format', 'json']);
 

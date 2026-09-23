@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,7 +93,43 @@ describe('Feature: Argument parsing', () => {
     expect(parsed.ignorePatterns).toEqual(['A.md', '**/B.md']);
   });
 
+  // Absent means the command line said nothing about a limit, which leaves
+  // whatever the run was configured with; naming a limit here would overwrite
+  // it with a default nobody asked for.
+  it('reports no limits when the command line named none', () => {
+    const parsed: ParsedArguments = parser.parse(['lint']);
+
+    expect(parsed.timeoutSeconds).toBeUndefined();
+    expect(parsed.maxMemoryMib).toBeUndefined();
+  });
+
+  it('accepts the largest limits that can be applied', () => {
+    const parsed: ParsedArguments = parser.parse([
+      'lint', '--timeout', '2147483', '--max-memory', '1048576',
+    ]);
+
+    expect(parsed.timeoutSeconds).toBe(2147483);
+    expect(parsed.maxMemoryMib).toBe(1048576);
+  });
+
+  it('accepts limits, including none at all', () => {
+    const parsed: ParsedArguments = parser.parse([
+      'lint', '--timeout', '0', '--max-memory', '512',
+    ]);
+
+    expect(parsed.timeoutSeconds).toBe(0);
+    expect(parsed.maxMemoryMib).toBe(512);
+  });
+
   it.each([
+    { argv: ['lint', '--timeout'], reason: 'a time limit with no value' },
+    { argv: ['lint', '--timeout', 'soon'], reason: 'a time limit that is not a number' },
+    { argv: ['lint', '--timeout', '-1'], reason: 'a negative time limit' },
+    { argv: ['lint', '--timeout', '1.5'], reason: 'a fractional time limit' },
+    { argv: ['lint', '--timeout', '1e308'], reason: 'a time limit too large to apply' },
+    { argv: ['lint', '--max-memory', '1e308'], reason: 'a heap limit too large to apply' },
+    { argv: ['lint', '--max-memory'], reason: 'a heap limit with no value' },
+    { argv: ['lint', '--max-memory', 'lots'], reason: 'a heap limit that is not a number' },
     { argv: ['bogus'], reason: 'unknown command' },
     { argv: ['lint', '--format', 'yaml'], reason: 'unsupported format' },
     { argv: ['lint', '--format'], reason: 'format with no value' },
@@ -569,5 +605,153 @@ describe('Feature: A document cannot take over the terminal it is reported in', 
 
     expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
     expect(outcome.output).not.toContain(ESCAPE);
+  });
+});
+
+describe('Feature: lint and stats are bounded by the process that starts them', () => {
+  /**
+   * Builds a runner whose supervised work is a script this test wrote,
+   * standing in for the executable: what matters here is how the command
+   * treats a child that finishes, fails or has to be stopped.
+   *
+   * @param name - Filename for the script
+   * @param source - The script's contents
+   * @returns A runner that supervises that script
+   */
+  function runnerFor(name: string, source: string): EcrCommandLine {
+    const entryPoint: string = join(workspace, name);
+    writeFileSync(entryPoint, source, 'utf8');
+
+    return new EcrCommandLine({ supervision: { entryPoint } });
+  }
+
+  it('passes on the report a finished run produced, and its exit code', () => {
+    const cli: EcrCommandLine = runnerFor(
+      'child-report.mjs',
+      ['process.stdout.write("  1 document(s) checked: 1 error(s), 0 warning(s).");', 'process.exitCode = 1;'].join('\n'),
+    );
+
+    const outcome: CommandOutcome = cli.run(['lint', 'docs']);
+
+    expect(outcome.exitCode).toBe(EXIT_VALIDATION_FAILED);
+    expect(outcome.stream).toBe('stdout');
+    expect(outcome.output).toContain('1 error(s)');
+  });
+
+  it('fails, rather than reporting a corpus, when the run has to be stopped', () => {
+    const cli: EcrCommandLine = runnerFor(
+      'child-spin.mjs',
+      [
+        'process.stdout.write("  half a report");',
+        'const until = Date.now() + 60000;',
+        'while (Date.now() < until) { /* as a parse does */ }',
+      ].join('\n'),
+    );
+
+    const outcome: CommandOutcome = cli.run(['lint', 'docs', '--timeout', '1']);
+
+    expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
+    expect(outcome.stream).toBe('stderr');
+    expect(outcome.output).toContain('did not finish');
+    expect(outcome.output).not.toContain('half a report');
+  }, 30000);
+
+  // Exit code 1 means "this corpus has errors", which is a verdict. A child
+  // that printed no report reached no verdict, whatever code it exited with.
+  it('does not turn a failed run into a verdict on the corpus', () => {
+    const cli: EcrCommandLine = runnerFor(
+      'child-broken.mjs',
+      ['process.stderr.write("Cannot find module");', 'process.exitCode = 1;'].join('\n'),
+    );
+
+    const outcome: CommandOutcome = cli.run(['lint', 'docs']);
+
+    expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
+    expect(outcome.stream).toBe('stderr');
+    expect(outcome.output).toContain('without producing a report');
+    expect(outcome.output).toContain('Cannot find module');
+  });
+
+  // The command exits 0, 1 or 2 and nothing else. A child that ended any
+  // other way ended as this command never does — out of heap, or the runtime
+  // beneath it stopping — and on Windows with a number no caller could read.
+  it('turns an exit code of its own into exit 2, rather than passing it on', () => {
+    const cli: EcrCommandLine = runnerFor(
+      'child-crash.mjs',
+      ['process.stderr.write("native trace");', 'process.exit(2147483651);'].join('\n'),
+    );
+
+    const outcome: CommandOutcome = cli.run(['lint', 'docs']);
+
+    expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
+    expect(outcome.output).toContain('ended unexpectedly');
+  });
+
+  it('says so when the run died for want of heap, and how to give it more', () => {
+    const cli: EcrCommandLine = runnerFor(
+      'child-oom.mjs',
+      [
+        'process.stderr.write("FATAL ERROR: Reached heap limit Allocation failed");',
+        'process.exit(134);',
+      ].join('\n'),
+    );
+
+    const outcome: CommandOutcome = cli.run(['lint', 'docs', '--max-memory', '64']);
+
+    expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
+    expect(outcome.output).toContain('ran out of heap, limited to 64 MiB');
+    expect(outcome.output).toContain('--max-memory');
+  });
+
+  it('keeps the limits it was configured with when the command line names none', () => {
+    const entryPoint: string = join(workspace, 'child-echo-limits.mjs');
+    writeFileSync(entryPoint, 'process.stdout.write(JSON.stringify(process.execArgv));', 'utf8');
+    const cli: EcrCommandLine = new EcrCommandLine({
+      supervision: { entryPoint, limits: { memoryMib: 64 } },
+    });
+
+    expect(cli.run(['lint', 'docs']).output).toBe('["--max-old-space-size=64"]');
+    // What the command line does name still wins.
+    expect(cli.run(['lint', 'docs', '--max-memory', '128']).output).toBe(
+      '["--max-old-space-size=128"]',
+    );
+  });
+
+  // The child resolves the corpus, and the project whose .ecrignore applies,
+  // against the directory it runs in. That must be the directory the command
+  // was configured with, not whichever one this process happens to be in.
+  it('runs the child in the directory the command was given', () => {
+    const project: string = join(workspace, 'elsewhere');
+    mkdirSync(project, { recursive: true });
+    const entryPoint: string = join(workspace, 'child-echo-cwd.mjs');
+    writeFileSync(entryPoint, 'process.stdout.write(process.cwd());', 'utf8');
+
+    const outcome: CommandOutcome = new EcrCommandLine({
+      workingDirectory: project,
+      supervision: { entryPoint },
+    }).run(['lint', 'docs']);
+
+    expect(realpathSync(outcome.output)).toBe(realpathSync(project));
+    expect(realpathSync(outcome.output)).not.toBe(realpathSync(process.cwd()));
+  });
+
+  it('leaves init alone, which parses nothing', () => {
+    const cli: EcrCommandLine = runnerFor(
+      'child-never.mjs',
+      'process.stdout.write("the child ran");',
+    );
+
+    // A refusal from init itself proves the command stayed in this process.
+    const outcome: CommandOutcome = cli.run(['init', '.']);
+
+    expect(outcome.exitCode).toBe(EXIT_USAGE_ERROR);
+    expect(outcome.output).not.toContain('the child ran');
+  });
+
+  it('runs in this process when nothing asked for supervision, as the library does', () => {
+    const outcome: CommandOutcome = new EcrCommandLine().run(['lint', '--example']);
+
+    expect(outcome.exitCode, outcome.output).toBe(EXIT_SUCCESS);
+    expect(outcome.output).toContain('9 document(s) checked, no errors.');
   });
 });
