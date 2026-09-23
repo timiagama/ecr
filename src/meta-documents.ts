@@ -12,6 +12,8 @@
  * enforced inside the rules themselves.
  */
 
+import { GlobPattern } from './glob-pattern.js';
+
 /**
  * Filenames that are conventionally outside the ECR reference graph.
  *
@@ -52,13 +54,13 @@ export class MetaDocumentFilter {
   private readonly metaDocumentNames: ReadonlySet<string>;
 
   /** Compiled ignore patterns supplied by the caller. */
-  private readonly ignorePatterns: readonly RegExp[];
+  private readonly ignorePatterns: readonly GlobPattern[];
 
   /**
    * Compiled directory parts of the ignore patterns that exclude everything
    * beneath a directory: those ending in slash-double-star, and `**` itself.
    */
-  private readonly ignoredDirectoryPatterns: readonly RegExp[];
+  private readonly ignoredDirectoryPatterns: readonly GlobPattern[];
 
   /**
    * Creates a filter.
@@ -73,13 +75,13 @@ export class MetaDocumentFilter {
     this.metaDocumentNames = new Set(
       metaDocumentNames.map((name: string): string => name.toLowerCase()),
     );
-    this.ignorePatterns = ignorePatterns.map((pattern: string): RegExp =>
-      MetaDocumentFilter.compileGlob(pattern),
+    this.ignorePatterns = ignorePatterns.map(
+      (pattern: string): GlobPattern => new GlobPattern(pattern),
     );
     this.ignoredDirectoryPatterns = ignorePatterns
       .map((pattern: string): string | undefined => MetaDocumentFilter.readIgnoredDirectory(pattern))
       .filter((directory: string | undefined): directory is string => directory !== undefined)
-      .map((directory: string): RegExp => MetaDocumentFilter.compileGlob(directory));
+      .map((directory: string): GlobPattern => new GlobPattern(directory));
   }
 
   /**
@@ -118,8 +120,8 @@ export class MetaDocumentFilter {
    * @returns `true` when at least one ignore pattern matches
    */
   public matchesIgnorePattern(corpusRelativePath: string): boolean {
-    return this.ignorePatterns.some((pattern: RegExp): boolean =>
-      pattern.test(corpusRelativePath),
+    return this.ignorePatterns.some((pattern: GlobPattern): boolean =>
+      pattern.matches(corpusRelativePath),
     );
   }
 
@@ -135,8 +137,8 @@ export class MetaDocumentFilter {
    * @returns `true` when no path beneath the directory could be included
    */
   public excludesDirectory(corpusRelativeDirectory: string): boolean {
-    return this.ignoredDirectoryPatterns.some((pattern: RegExp): boolean =>
-      pattern.test(corpusRelativeDirectory),
+    return this.ignoredDirectoryPatterns.some((pattern: GlobPattern): boolean =>
+      pattern.matches(corpusRelativeDirectory),
     );
   }
 
@@ -153,47 +155,5 @@ export class MetaDocumentFilter {
     }
 
     return pattern.endsWith('/**') ? pattern.slice(0, -'/**'.length) : undefined;
-  }
-
-  /**
-   * Compiles a minimal glob pattern into an anchored regular expression.
-   *
-   * A `**` followed by a slash matches zero or more whole directories, so a
-   * pattern of that form matches a file at the corpus root as well as one
-   * nested in `a/b/`. Any other `**` matches across path separators; `*` matches within a single segment;
-   * `?` matches one character other than a separator. All other characters are
-   * matched literally.
-   *
-   * @param pattern - The glob pattern to compile
-   * @returns An anchored regular expression equivalent to the pattern
-   */
-  private static compileGlob(pattern: string): RegExp {
-    let expression: string = '';
-
-    for (let index: number = 0; index < pattern.length; index += 1) {
-      const character: string = pattern[index] ?? '';
-
-      if (character === '*') {
-        if (pattern[index + 1] === '*' && pattern[index + 2] === '/') {
-          expression += '(?:.*/)?';
-          index += 2;
-        } else if (pattern[index + 1] === '*') {
-          expression += '.*';
-          index += 1;
-        } else {
-          expression += '[^/]*';
-        }
-        continue;
-      }
-
-      if (character === '?') {
-        expression += '[^/]';
-        continue;
-      }
-
-      expression += character.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-    }
-
-    return new RegExp(`^${expression}$`);
   }
 }
