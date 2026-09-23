@@ -60,7 +60,11 @@ export type {
   InlineReferenceRuleOptions,
 } from "./inline-reference-rule.js";
 
-export { PerDocumentVisitor } from "./per-document-visitor.js";
+export {
+  PerDocumentVisitor,
+  UNPARSABLE_DOCUMENT_RULE_ID,
+  UNPARSABLE_DOCUMENT_CAUSE,
+} from "./per-document-visitor.js";
 export type {
   PerDocumentVisitorOptions,
 } from "./per-document-visitor.js";

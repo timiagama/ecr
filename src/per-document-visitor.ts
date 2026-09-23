@@ -34,7 +34,6 @@
 
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
-import { toString } from 'mdast-util-to-string';
 
 // ---------------------------------------------------------------------------
 // Type-only imports (verbatimModuleSyntax requires `import type`)
@@ -188,6 +187,19 @@ interface InlineReferencesPassResult {
 }
 
 // ---------------------------------------------------------------------------
+// A document the parser could not read
+// ---------------------------------------------------------------------------
+
+/** Rule identifier reported when a document cannot be parsed at all. */
+export const UNPARSABLE_DOCUMENT_RULE_ID: string = 'document/unparsable';
+
+/** The `data.cause` of that diagnostic. */
+export const UNPARSABLE_DOCUMENT_CAUSE: string = 'unparsable-document';
+
+/** How much of the parser's own account of the failure to repeat. */
+const UNPARSABLE_REASON_LIMIT: number = 200;
+
+// ---------------------------------------------------------------------------
 // Excluded ancestor node types for ECR104 filtering
 // ---------------------------------------------------------------------------
 
@@ -266,6 +278,33 @@ interface SectionContextTracker {
   /** The currently active section identifier (DocID or SectionID). */
   // eslint-disable-next-line @typescript-eslint/no-duplicate-type-constituents -- Semantically distinct: context may be DocID or SectionID
   current: DocID | SectionID;
+}
+
+/** A list of siblings being walked, and how far through it the walk is. */
+interface SiblingsFrame {
+  /** The siblings, in document order. */
+  readonly children: readonly MdastNode[];
+  /** Index of the next sibling to visit. */
+  readonly index: number;
+}
+
+/** A node waiting to be visited by the ECR104 inline references walk. */
+interface InlineWalkEntry {
+  /** The node to visit. */
+  readonly node: MdastNode;
+  /**
+   * Whether an ancestor's type is one of {@link EXCLUDED_ANCESTOR_NODE_TYPES},
+   * which puts the node's text outside inline reference detection.
+   */
+  readonly excluded: boolean;
+}
+
+/** A node waiting to be visited by an inline segment walk, with its wrappers. */
+interface SegmentWalkEntry {
+  /** The node to visit. */
+  readonly node: MdastNode;
+  /** Types of the formatting spans enclosing it, outermost first. */
+  readonly wrappers: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -362,7 +401,14 @@ export class PerDocumentVisitor {
    *          DocID is recovered, extracted structural artefacts
    */
   public lint(markdownText: string): LintResult {
-    const root: MdastRoot = this.parseMarkdown(markdownText);
+    let root: MdastRoot;
+
+    try {
+      root = this.parseMarkdown(markdownText);
+    } catch (error: unknown) {
+      return this.reportUnparsable(error);
+    }
+
     const passOneResult: HeadingsAndReferencesPassResult =
       this.executeHeadingsAndReferencesPass(root, markdownText);
 
@@ -427,6 +473,40 @@ export class PerDocumentVisitor {
       .use(remarkParse)
       .parse(markdownText) as unknown as MdastRoot;
     return root;
+  }
+
+  /**
+   * Reports a document the parser could not read.
+   *
+   * The parser walks a document's structure by recursion, inside a package
+   * this project does not control, so a deeply nested link label or image
+   * description can end the parse with a stack overflow. That must be one
+   * document's error, reported like any other, and never a crash that stops
+   * a corpus part way and leaves the rest unvalidated.
+   *
+   * @param error - What the parser threw
+   * @returns A failing result carrying one error diagnostic
+   */
+  private reportUnparsable(error: unknown): LintResult {
+    const reason: string =
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+
+    return {
+      input: this.buildLintInput(),
+      ok: false,
+      diagnostics: [
+        {
+          severity: 'error',
+          ruleId: UNPARSABLE_DOCUMENT_RULE_ID,
+          message:
+            `Document could not be parsed, so none of it was validated ` +
+            `(${reason.slice(0, UNPARSABLE_REASON_LIMIT)}). Deeply nested Markdown is the ` +
+            `usual cause, because parsing it recurses.`,
+          uri: this.uri,
+          data: { cause: UNPARSABLE_DOCUMENT_CAUSE },
+        },
+      ],
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -535,26 +615,98 @@ export class PerDocumentVisitor {
   }
 
   /**
-   * Recursively collects all heading nodes from the AST into the provided array.
+   * Collects all heading nodes from the AST into the provided array.
    *
    * Walks the AST depth-first in document order, extracting
    * {@link HeadingNodeData} from every node with `type === 'heading'`.
    *
-   * @param node - The current MDAST node being visited
+   * @param node - The root of the walk
    * @param headings - The accumulator array for collected heading data
    */
   private collectHeadings(
     node: MdastNode,
     headings: HeadingNodeData[],
   ): void {
-    if (node.type === 'heading' && node.depth !== undefined) {
-      const headingData: HeadingNodeData = this.extractHeadingNodeData(node);
-      headings.push(headingData);
+    const pending: MdastNode[] = [node];
+
+    while (pending.length > 0) {
+      const current: MdastNode | undefined = pending.pop();
+
+      if (current === undefined) {
+        break;
+      }
+
+      if (current.type === 'heading' && current.depth !== undefined) {
+        headings.push(this.extractHeadingNodeData(current));
+      }
+
+      PerDocumentVisitor.pushChildren(current, pending);
+    }
+  }
+
+  /**
+   * Reads a node's plain text: what a reader sees, with the formatting gone.
+   *
+   * @param node - The node to read
+   * @returns Its text, and its descendants' text, in order
+   */
+  private static showNodeText(node: MdastNode): string {
+    // What `mdast-util-to-string` returns, gathered over a stack instead of
+    // by recursion: a node's own value, else an image's alternative text,
+    // else its children's text in order. That package recurses, so a heading
+    // of a few thousand nested emphasis spans -- which costs an author two
+    // characters a level -- ended the process inside it.
+    const parts: string[] = [];
+    const pending: MdastNode[] = [node];
+
+    while (pending.length > 0) {
+      const current: MdastNode | undefined = pending.pop();
+
+      if (current === undefined) {
+        break;
+      }
+
+      if (current.value !== undefined) {
+        parts.push(current.value);
+        continue;
+      }
+
+      if (typeof current.alt === 'string' && current.alt.length > 0) {
+        parts.push(current.alt);
+        continue;
+      }
+
+      PerDocumentVisitor.pushChildren(current, pending);
     }
 
-    if (node.children !== undefined) {
-      for (const child of node.children) {
-        this.collectHeadings(child, headings);
+    return parts.join('');
+  }
+
+  /**
+   * Puts a node's children on a walk's stack so that they come off it in
+   * document order.
+   *
+   * Every walk over a document's nodes keeps its own stack rather than
+   * calling itself, because nesting in Markdown costs the author almost
+   * nothing: a few thousand nested blockquotes, or nested bold spans, fit in
+   * a few kilobytes, and recursion over them exhausts the call stack and
+   * takes the process with it. A stack on the heap has no such limit.
+   *
+   * @param node - The node whose children are to be walked
+   * @param pending - The stack to push onto, from which nodes are taken with `pop`
+   */
+  private static pushChildren(node: MdastNode, pending: MdastNode[]): void {
+    const children: readonly MdastNode[] | undefined = node.children;
+
+    if (children === undefined) {
+      return;
+    }
+
+    for (let index: number = children.length - 1; index >= 0; index -= 1) {
+      const child: MdastNode | undefined = children[index];
+
+      if (child !== undefined) {
+        pending.push(child);
       }
     }
   }
@@ -637,24 +789,34 @@ export class PerDocumentVisitor {
    * @returns The heading and its position among its siblings, or `undefined`
    */
   private findReferencesSection(node: MdastNode | MdastRoot): ReferencesSectionLocation | undefined {
-    const children: readonly MdastNode[] = node.children ?? [];
+    // Each frame is a list of siblings and how far through it the walk is, so
+    // that a match can report the position among its siblings that the caller
+    // needs. Depth-first and pre-order, as the recursive form was.
+    const frames: SiblingsFrame[] = [{ children: node.children ?? [], index: 0 }];
 
-    for (let index: number = 0; index < children.length; index += 1) {
-      const child: MdastNode | undefined = children[index];
+    while (frames.length > 0) {
+      const frame: SiblingsFrame | undefined = frames.pop();
+
+      if (frame === undefined) {
+        break;
+      }
+
+      const child: MdastNode | undefined = frame.children[frame.index];
 
       if (child === undefined) {
+        // These siblings are exhausted, so the frame is not put back.
         continue;
       }
 
+      // The rest of these siblings come after everything beneath this child,
+      // so they go back on the stack before it.
+      frames.push({ children: frame.children, index: frame.index + 1 });
+
       if (child.type === 'heading' && this.tellReferencesHeading(this.extractHeadingNodeData(child))) {
-        return { heading: child, siblings: children, index };
+        return { heading: child, siblings: frame.children, index: frame.index };
       }
 
-      const found: ReferencesSectionLocation | undefined = this.findReferencesSection(child);
-
-      if (found !== undefined) {
-        return found;
-      }
+      frames.push({ children: child.children ?? [], index: 0 });
     }
 
     return undefined;
@@ -709,7 +871,6 @@ export class PerDocumentVisitor {
     // When a text node is encountered (not excluded by ancestors), feed to ECR104.
     this.walkNodesForInlineReferences(
       root,
-      [],
       sectionContext,
       inlineReferenceRule,
     );
@@ -721,78 +882,108 @@ export class PerDocumentVisitor {
   }
 
   /**
-   * Recursively walks the AST to find inline runs for ECR104, tracking
-   * ancestor types for exclusion filtering and updating section context
-   * when headings are encountered.
+   * Walks the AST to find inline runs for ECR104, tracking whether an
+   * excluded ancestor encloses the node and updating section context when
+   * headings are encountered.
    *
    * A paragraph is handed to ECR104 whole, as one inline run, because a
    * citation is recognised in the text a reader sees and not one parsed text
    * node at a time (1#9.5 rule 1). Its children are not walked separately.
    *
-   * A hand-written depth-first, pre-order walk, so that the ancestor types
-   * needed for exclusion filtering are tracked without another dependency.
+   * A hand-written depth-first, pre-order walk over an explicit stack: document
+   * order decides which section each run belongs to, and see
+   * {@link PerDocumentVisitor.pushChildren} for why the stack is not the call
+   * stack. Exclusion is carried down as one flag, because a node is excluded
+   * exactly when some ancestor's type is, so nothing is gained by keeping the
+   * ancestors themselves.
    *
-   * @param node - The current MDAST node being visited
-   * @param ancestorTypes - The types of all ancestor nodes from root to parent
+   * @param root - The root of the walk
    * @param sectionContext - Mutable wrapper holding the current section context
    * @param inlineReferenceRule - The ECR104 rule instance to feed runs to
    */
   private walkNodesForInlineReferences(
-    node: MdastNode,
-    ancestorTypes: readonly string[],
+    root: MdastNode,
     sectionContext: SectionContextTracker,
     inlineReferenceRule: InlineReferenceRule,
   ): void {
-    if (node.type === 'heading' && node.depth !== undefined) {
-      const headingText: string = toString(node);
-      const headingDepth: number = node.depth;
+    const pending: InlineWalkEntry[] = [{ node: root, excluded: false }];
 
-      sectionContext.current = this.determineSectionContext(
-        headingText,
-        headingDepth,
-        sectionContext.current,
-      );
+    while (pending.length > 0) {
+      const entry: InlineWalkEntry | undefined = pending.pop();
 
-      // Do not recurse into heading children for text node extraction;
-      // heading text is not subject to inline reference detection.
-      return;
-    }
+      if (entry === undefined) {
+        break;
+      }
 
-    if (INLINE_RUN_NODE_TYPES.has(node.type) && node.children !== undefined) {
-      if (!this.tellNodeExcludedByAncestors(ancestorTypes)) {
-        const segments: InlineSegment[] = [];
+      const { node, excluded } = entry;
 
-        for (const child of node.children) {
-          this.collectInlineSegments(child, [], segments);
+      if (node.type === 'heading' && node.depth !== undefined) {
+        sectionContext.current = this.determineSectionContext(
+          PerDocumentVisitor.showNodeText(node),
+          node.depth,
+          sectionContext.current,
+        );
+
+        // Do not walk into heading children for text node extraction;
+        // heading text is not subject to inline reference detection.
+        continue;
+      }
+
+      if (INLINE_RUN_NODE_TYPES.has(node.type) && node.children !== undefined) {
+        if (!excluded) {
+          const segments: InlineSegment[] = [];
+
+          for (const child of node.children) {
+            this.collectInlineSegments(child, [], segments);
+          }
+
+          inlineReferenceRule.evaluateInlineRun(segments, sectionContext.current);
         }
 
-        inlineReferenceRule.evaluateInlineRun(segments, sectionContext.current);
+        continue;
       }
 
+      // A text node outside any run is not expected from the parser, but if one
+      // appears it is still evaluated, as a run of its own.
+      if (node.type === 'text' && node.value !== undefined) {
+        if (!excluded) {
+          const textNodeData: TextNodeData = this.extractTextNodeData(node);
+          inlineReferenceRule.evaluateTextNode(textNodeData, sectionContext.current);
+        }
+
+        continue;
+      }
+
+      PerDocumentVisitor.pushInlineWalkChildren(node, excluded, pending);
+    }
+  }
+
+  /**
+   * Puts a node's children on the inline walk's stack, in document order,
+   * noting whether an excluded ancestor now encloses them.
+   *
+   * @param node - The node whose children are to be walked
+   * @param excluded - Whether an excluded ancestor already encloses the node
+   * @param pending - The stack to push onto
+   */
+  private static pushInlineWalkChildren(
+    node: MdastNode,
+    excluded: boolean,
+    pending: InlineWalkEntry[],
+  ): void {
+    const children: readonly MdastNode[] | undefined = node.children;
+
+    if (children === undefined) {
       return;
     }
 
-    // A text node outside any run is not expected from the parser, but if one
-    // appears it is still evaluated, as a run of its own.
-    if (node.type === 'text' && node.value !== undefined) {
-      if (!this.tellNodeExcludedByAncestors(ancestorTypes)) {
-        const textNodeData: TextNodeData = this.extractTextNodeData(node);
-        inlineReferenceRule.evaluateTextNode(textNodeData, sectionContext.current);
-      }
+    const childrenExcluded: boolean = excluded || EXCLUDED_ANCESTOR_NODE_TYPES.has(node.type);
 
-      return;
-    }
+    for (let index: number = children.length - 1; index >= 0; index -= 1) {
+      const child: MdastNode | undefined = children[index];
 
-    if (node.children !== undefined) {
-      const updatedAncestors: readonly string[] = [...ancestorTypes, node.type];
-
-      for (const child of node.children) {
-        this.walkNodesForInlineReferences(
-          child,
-          updatedAncestors,
-          sectionContext,
-          inlineReferenceRule,
-        );
+      if (child !== undefined) {
+        pending.push({ node: child, excluded: childrenExcluded });
       }
     }
   }
@@ -817,6 +1008,34 @@ export class PerDocumentVisitor {
     wrappers: readonly string[],
     segments: InlineSegment[],
   ): void {
+    const pending: SegmentWalkEntry[] = [{ node, wrappers }];
+
+    while (pending.length > 0) {
+      const entry: SegmentWalkEntry | undefined = pending.pop();
+
+      if (entry === undefined) {
+        break;
+      }
+
+      this.collectInlineSegment(entry, segments, pending);
+    }
+  }
+
+  /**
+   * Turns one inline node into segments, or puts its children on the stack
+   * to be turned into segments in their turn.
+   *
+   * @param entry - The node and the formatting spans enclosing it
+   * @param segments - Accumulator the segments are appended to
+   * @param pending - The walk's stack, which children are pushed onto in document order
+   */
+  private collectInlineSegment(
+    entry: SegmentWalkEntry,
+    segments: InlineSegment[],
+    pending: SegmentWalkEntry[],
+  ): void {
+    const { node, wrappers } = entry;
+
     if (node.type === 'text') {
       const range: PositionRange | undefined = this.mapPosition(node.position);
 
@@ -841,8 +1060,12 @@ export class PerDocumentVisitor {
     if (node.type !== 'html' && node.children !== undefined) {
       const inner: readonly string[] = [...wrappers, node.type];
 
-      for (const child of node.children) {
-        this.collectInlineSegments(child, inner, segments);
+      for (let index: number = node.children.length - 1; index >= 0; index -= 1) {
+        const child: MdastNode | undefined = node.children[index];
+
+        if (child !== undefined) {
+          pending.push({ node: child, wrappers: inner });
+        }
       }
 
       return;
@@ -919,47 +1142,14 @@ export class PerDocumentVisitor {
   }
 
   // -------------------------------------------------------------------------
-  // Private: Ancestor filtering for ECR104
-  // -------------------------------------------------------------------------
-
-  /**
-   * Determines whether a node should be excluded from ECR104 inline reference
-   * detection based on its ancestor chain.
-   *
-   * Text nodes are excluded if any ancestor in the chain has a node type
-   * that is a member of {@link EXCLUDED_ANCESTOR_NODE_TYPES} (i.e., `code`,
-   * `inlineCode`, or `html`).
-   *
-   * This method is called during the recursive AST walk, which provides
-   * the ancestor type strings for each visited node.
-   *
-   * @param ancestorTypes - The type strings of all ancestor nodes from the root
-   *                        down to (but not including) the current node
-   * @returns `true` if the node should be excluded, `false` if it should be
-   *          fed to ECR104
-   */
-  private tellNodeExcludedByAncestors(
-    ancestorTypes: readonly string[],
-  ): boolean {
-    for (const ancestorType of ancestorTypes) {
-      if (EXCLUDED_ANCESTOR_NODE_TYPES.has(ancestorType)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  // -------------------------------------------------------------------------
   // Private: Text extraction from list items
   // -------------------------------------------------------------------------
 
   /**
    * Extracts the plain text content from a list item AST node.
    *
-   * Uses `mdast-util-to-string` to recursively extract text from the
-   * list item's child nodes, producing a single plain text string
-   * suitable for feeding to ECR103.
+   * Gathers the text of the list item's child nodes into a single plain text
+   * string suitable for feeding to ECR103.
    *
    * @param listItemNode - The MDAST list item node to extract text from
    * @returns The extracted {@link ListItemNodeData} with text and optional range
@@ -1010,21 +1200,33 @@ export class PerDocumentVisitor {
    * @param segments - Accumulator the segments are appended to
    */
   private collectListItemSegments(node: MdastNode, segments: ListItemSegment[]): void {
-    const range: PositionRange | undefined = this.mapPosition(node.position);
-    const withRange: { readonly range?: PositionRange } = range !== undefined ? { range } : {};
+    const pending: MdastNode[] = [node];
 
-    if (node.value !== undefined) {
-      segments.push({ kind: PerDocumentVisitor.showSegmentKind(node.type), text: node.value, ...withRange });
-      return;
-    }
+    while (pending.length > 0) {
+      const current: MdastNode | undefined = pending.pop();
 
-    if (typeof node.alt === 'string' && node.alt.length > 0) {
-      segments.push({ kind: 'other', text: node.alt, ...withRange });
-      return;
-    }
+      if (current === undefined) {
+        break;
+      }
 
-    for (const child of node.children ?? []) {
-      this.collectListItemSegments(child, segments);
+      const range: PositionRange | undefined = this.mapPosition(current.position);
+      const withRange: { readonly range?: PositionRange } = range !== undefined ? { range } : {};
+
+      if (current.value !== undefined) {
+        segments.push({
+          kind: PerDocumentVisitor.showSegmentKind(current.type),
+          text: current.value,
+          ...withRange,
+        });
+        continue;
+      }
+
+      if (typeof current.alt === 'string' && current.alt.length > 0) {
+        segments.push({ kind: 'other', text: current.alt, ...withRange });
+        continue;
+      }
+
+      PerDocumentVisitor.pushChildren(current, pending);
     }
   }
 
@@ -1035,7 +1237,7 @@ export class PerDocumentVisitor {
   /**
    * Extracts heading node data from an MDAST heading node.
    *
-   * Uses `mdast-util-to-string` to extract the plain text content
+   * Reads the plain text content with {@link PerDocumentVisitor.showNodeText}
    * and maps the MDAST position to a {@link HeadingNodeData} structure
    * suitable for consumption by ECR101, ECR102, and ECR103.
    *
@@ -1045,7 +1247,7 @@ export class PerDocumentVisitor {
   private extractHeadingNodeData(
     headingNode: MdastNode,
   ): HeadingNodeData {
-    const text: string = toString(headingNode);
+    const text: string = PerDocumentVisitor.showNodeText(headingNode);
     const range: PositionRange | undefined =
       this.mapPosition(headingNode.position);
 
